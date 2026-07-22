@@ -4,7 +4,7 @@ default: test
 setup:
     uv sync
     uv run pre-commit install
-    uv run playwright install chromium
+    uv run playwright install chromium firefox
 
 # Run the app locally on http://localhost:8080 (auto-reloads on change).
 run:
