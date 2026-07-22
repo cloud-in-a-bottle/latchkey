@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 import attr
@@ -8,8 +9,10 @@ from litestar import Litestar
 from litestar import Request
 from litestar import Response
 from litestar import get
+from litestar.contrib.jinja import JinjaTemplateEngine
 from litestar.exceptions import ValidationException
 from litestar.static_files import create_static_files_router
+from litestar.template import TemplateConfig
 from loguru import logger
 
 from server.api_models import ErrorBody
@@ -112,5 +115,6 @@ def _validation_exception_handler(request: Request[Any, Any, Any], exc: Validati
 app = Litestar(
     route_handlers=_route_handlers(),  # type: ignore[arg-type]
     lifespan=[lifespan],
+    template_config=TemplateConfig(directory=Path(__file__).parent / "templates", engine=JinjaTemplateEngine),
     exception_handlers={ValidationException: _validation_exception_handler},
 )

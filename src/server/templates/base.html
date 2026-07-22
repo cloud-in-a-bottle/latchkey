@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}Latchkey{% endblock %}</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a2e; }
+    h1 { font-size: 1.4rem; }  h2 { font-size: 1.1rem; margin-top: 2rem; }
+    table { border-collapse: collapse; width: 100%; }
+    td, th { text-align: left; padding: 0.4rem 0.8rem; border-bottom: 1px solid #e0e0e8; }
+    button { padding: 0.35rem 0.9rem; border: 1px solid #4a4ae0; background: #fff; color: #4a4ae0;
+             border-radius: 6px; cursor: pointer; }
+    button.primary { background: #4a4ae0; color: #fff; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: 0.4rem; margin: 0.3rem 0;
+                      border: 1px solid #c0c0d0; border-radius: 6px; font-family: ui-monospace, monospace; }
+    .muted { color: #777; font-size: 0.9rem; }
+    .status-valid { color: #0a7d36; }  .status-invalid, .status-missing { color: #b3261e; }
+    .card { border: 1px solid #e0e0e8; border-radius: 10px; padding: 1rem 1.4rem; margin: 1rem 0; }
+    iframe { border: 1px solid #c0c0d0; border-radius: 8px; width: 100%; height: 640px; }
+    code { background: #f2f2f7; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    pre code { display: block; padding: 0.6rem; overflow-x: auto; }
+  </style>
+</head>
+<body>
+{% block content %}{% endblock %}
+<script>
+{% block script %}{% endblock %}
+</script>
+</body>
+</html>

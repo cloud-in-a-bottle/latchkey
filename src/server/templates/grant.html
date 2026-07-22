@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Grant access{% endblock %}
+{% block content %}
+{% if not consumer_id or not consumer_name %}
+<h1>Grant access</h1>
+<p>Missing consumer info in the link.</p>
+{% elif grant is none %}
+<h1>Grant access</h1>
+<p><strong>{{ consumer_name }}</strong> wants to use latchkey, but didn't specify a valid grant
+(which API scope and permissions it needs). Ask the app's author.</p>
+<p><a href="/">&larr; console</a></p>
+{% else %}
+<h1>Grant access?</h1>
+<div class="card">
+  <p>The app <strong>{{ consumer_name }}</strong> is asking to call third-party APIs
+  through latchkey using <em>your</em> stored credentials:</p>
+  <p>API scope: <code>{{ grant.scope }}</code></p>
+  <p>Allowed actions:</p>
+  <ul>
+    {% for permission in grant.permissions %}<li><code>{{ permission }}</code></li>{% endfor %}
+  </ul>
+  {% if schemas_pretty %}
+  <p>Custom request-matching schemas (for services latchkey doesn't know built-in):</p>
+  <pre><code>{{ schemas_pretty }}</code></pre>
+  {% endif %}
+  <p class="muted">The app will never see the credentials themselves; latchkey injects them and
+  only allows requests matching these permissions.</p>
+  <p>
+    <button class="primary" onclick="approve()">Allow</button>
+    <button onclick="deny()">Deny</button>
+    <span id="result" class="muted"></span>
+  </p>
+</div>
+{% endif %}
+{% endblock %}
+{% block script %}
+{% if consumer_id and consumer_name and grant is not none %}
+const returnTo = {{ return_to | tojson }};
+async function approve() {
+  const out = document.getElementById('result');
+  out.textContent = '...';
+  const r = await fetch('/owner/api/grants/approve', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({consumer_app_id: {{ consumer_id | tojson }},
+                          grant: {{ grant_payload | tojson }}})});
+  if (!r.ok) {
+    const body = await r.json();
+    out.textContent = body.message || 'failed';
+    return;
+  }
+  out.textContent = 'granted';
+  if (returnTo) window.location = returnTo;
+}
+function deny() {
+  if (returnTo) window.location = returnTo; else window.location = '/';
+}
+{% endif %}
+{% endblock %}
