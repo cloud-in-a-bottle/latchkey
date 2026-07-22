@@ -1,9 +1,5 @@
-import json
-import re
 from typing import Any
-from urllib.parse import urlencode
 
-import attr
 from litestar import Request
 from litestar import Response
 from litestar import get
@@ -11,62 +7,30 @@ from litestar import post
 from litestar import route
 from loguru import logger
 
-from server.api_models import ErrorBody
-from server.api_models import GrantUrlBody
-from server.api_models import PermissionRequiredBody
-from server.api_models import RequestGrantRequest
-from server.api_models import RequiredGrant
-from server.api_models import ServicesListBody
-from server.gateway_client import GatewayRpcError
-from server.gateway_client import is_permission_denial
-from server.grants import META_SCOPE
-from server.grants import PERMISSION_SERVICES_READ
-from server.grants import ScopeGrant
-from server.grants import detent_grants
-from server.grants import has_meta_permission
-from server.grants import parse_permissions_header
-from server.state import AppServices
-from server.state import services_from
+from server.core.gateway_client import GatewayRpcError
+from server.core.gateway_client import is_permission_denial
+from server.core.grants import META_SCOPE
+from server.core.grants import PERMISSION_SERVICES_READ
+from server.core.grants import ConsumerContext
+from server.core.grants import ScopeGrant
+from server.core.grants import build_grant_url
+from server.core.grants import detent_grants
+from server.core.grants import has_meta_permission
+from server.core.grants import parse_permissions_header
+from server.core.proxying import PROXY_PATH_PREFIX
+from server.core.proxying import extract_proxy_target
+from server.core.proxying import forwardable_request_headers
+from server.core.proxying import forwardable_response_headers
+from server.web.api_models import ErrorBody
+from server.web.api_models import GrantUrlBody
+from server.web.api_models import PermissionRequiredBody
+from server.web.api_models import RequestGrantRequest
+from server.web.api_models import RequiredGrant
+from server.web.api_models import ServicesListBody
+from server.web.state import AppServices
+from server.web.state import services_from
 
 _META_GRANT = ScopeGrant(scope=META_SCOPE, permissions=(PERMISSION_SERVICES_READ,))
-
-# Request headers never forwarded upstream. The router's service proxy authenticates callers
-# for us; Authorization and Cookie from the original request must not leak to third parties
-# (browser-originated service calls carry the owner's zone session cookie).
-_STRIPPED_REQUEST_HEADERS = {
-    "host",
-    "authorization",
-    "cookie",
-    "content-length",
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailers",
-    "transfer-encoding",
-    "upgrade",
-    "expect",
-}
-
-_STRIPPED_RESPONSE_HEADERS = {
-    "content-length",
-    "content-encoding",
-    "connection",
-    "keep-alive",
-    "transfer-encoding",
-    "upgrade",
-    "trailers",
-}
-
-PROXY_PATH_PREFIX = "/api/proxy/"
-
-
-@attr.s(auto_attribs=True, frozen=True)
-class ConsumerContext:
-    app_id: str
-    app_name: str
-    grants: tuple[ScopeGrant, ...]
 
 
 class NotAServiceCallError(Exception):
@@ -85,20 +49,6 @@ def consumer_context(request: Request[Any, Any, Any]) -> ConsumerContext:
     )
 
 
-def _grant_url(
-    services: AppServices,
-    consumer: ConsumerContext,
-    grant: ScopeGrant | None = None,
-    return_to: str | None = None,
-) -> str:
-    params: dict[str, str] = {"consumer_id": consumer.app_id, "consumer_name": consumer.app_name}
-    if grant is not None:
-        params["grant"] = json.dumps(grant.as_payload())
-    if return_to is not None:
-        params["return_to"] = return_to
-    return f"{services.config.own_url}/grant?{urlencode(params)}"
-
-
 def _permission_required_response(
     services: AppServices,
     consumer: ConsumerContext,
@@ -108,7 +58,7 @@ def _permission_required_response(
     return Response(
         PermissionRequiredBody(
             message=message,
-            grant_url=_grant_url(services, consumer, grant=grant),
+            grant_url=build_grant_url(services.config.own_url, consumer, grant=grant),
             required_grant=RequiredGrant(grant=grant.to_payload_model()) if grant is not None else None,
         ),
         status_code=403,
@@ -168,13 +118,10 @@ async def request_grant(
         consumer = consumer_context(request)
     except NotAServiceCallError:
         return _not_a_service_call()
-    grant = data.grant.to_scope_grant()
-    return Response(
-        GrantUrlBody(
-            grant_url=_grant_url(services, consumer, grant=grant, return_to=data.return_to),
-            required_grant=RequiredGrant(grant=data.grant),
-        )
+    grant_url = build_grant_url(
+        services.config.own_url, consumer, grant=data.grant.to_scope_grant(), return_to=data.return_to
     )
+    return Response(GrantUrlBody(grant_url=grant_url, required_grant=RequiredGrant(grant=data.grant)))
 
 
 @route(
@@ -188,23 +135,10 @@ async def proxy(request: Request[Any, Any, Any], target_url: str) -> Response[An
     except NotAServiceCallError:
         return _not_a_service_call()
 
-    # Rebuild the target from the raw ASGI path so percent-encoding survives litestar's
-    # path-parameter decoding.
+    # Use the raw ASGI path so percent-encoding survives litestar's path-parameter decoding.
     raw_path: bytes = request.scope["raw_path"]
-    raw = raw_path.decode("latin-1")
-    if not raw.startswith(PROXY_PATH_PREFIX):
-        return Response(
-            ErrorBody(error="bad_request", message=f"proxy path must start with {PROXY_PATH_PREFIX}"),
-            status_code=400,
-        )
-    target = raw[len(PROXY_PATH_PREFIX) :]
-    # Proxies (including the router) may collapse "//" in paths; restore the scheme separator.
-    if re.match(r"^https?:/[^/]", target):
-        target = target.replace(":/", "://", 1)
-    query = request.scope["query_string"].decode("latin-1")
-    if query:
-        target = f"{target}?{query}"
-    if not target.startswith(("http://", "https://")):
+    target = extract_proxy_target(raw_path.decode("latin-1"), request.scope["query_string"].decode("latin-1"))
+    if target is None:
         return Response(
             ErrorBody(
                 error="bad_request",
@@ -219,11 +153,7 @@ async def proxy(request: Request[Any, Any, Any], target_url: str) -> Response[An
         )
 
     jwt = await services.consumer_files.jwt_for(consumer.app_id, consumer.grants)
-    headers = [
-        (name, value)
-        for name, value in request.headers.items()
-        if name.lower() not in _STRIPPED_REQUEST_HEADERS and not name.lower().startswith("x-openhost-")
-    ]
+    headers = forwardable_request_headers(list(request.headers.items()))
     body = await request.body()
 
     await services.runtime.ensure_gateway_running()
@@ -237,12 +167,9 @@ async def proxy(request: Request[Any, Any, Any], target_url: str) -> Response[An
             "request not allowed by this consumer's grants; request a grant for the scope covering it",
         )
 
-    response_headers = {
-        name: value for name, value in upstream.headers.items() if name.lower() not in _STRIPPED_RESPONSE_HEADERS
-    }
     return Response(
         upstream.content,
         status_code=upstream.status_code,
-        headers=response_headers,
+        headers=forwardable_response_headers(list(upstream.headers.items())),
         media_type=upstream.headers.get("content-type", "application/octet-stream"),
     )

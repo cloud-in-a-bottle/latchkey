@@ -8,7 +8,7 @@ setup:
 
 # Run the app locally on http://localhost:8080 (auto-reloads on change).
 run:
-    uv run hypercorn server.app:app --bind 0.0.0.0:8080 --reload
+    uv run hypercorn server.web.app:app --bind 0.0.0.0:8080 --reload
 
 # Run the test suite.
 test:

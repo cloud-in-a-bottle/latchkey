@@ -5,9 +5,9 @@ from enum import StrEnum
 import attr
 from loguru import logger
 
-from server.gateway_client import BROWSER_LOGIN_TIMEOUT_SECONDS
-from server.gateway_client import GatewayClient
-from server.gateway_client import GatewayRpcError
+from server.core.gateway_client import BROWSER_LOGIN_TIMEOUT_SECONDS
+from server.core.gateway_client import GatewayClient
+from server.core.gateway_client import GatewayRpcError
 
 
 class LoginState(StrEnum):

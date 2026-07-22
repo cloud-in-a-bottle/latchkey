@@ -17,4 +17,4 @@ done
 # VNC on localhost only; the app bridges it to an owner-gated websocket.
 x11vnc -display ":${DISPLAY_NUM}" -localhost -rfbport 5900 -forever -shared -nopw -quiet &
 
-exec uv run --frozen --no-dev hypercorn server.app:app --bind 0.0.0.0:8080
+exec uv run --frozen --no-dev hypercorn server.web.app:app --bind 0.0.0.0:8080

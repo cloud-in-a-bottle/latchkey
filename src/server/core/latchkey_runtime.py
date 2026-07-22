@@ -8,7 +8,7 @@ import attr
 import httpx
 from loguru import logger
 
-from server.config import AppConfig
+from server.core.config import AppConfig
 
 CLI_TIMEOUT_SECONDS = 60.0
 GATEWAY_START_TIMEOUT_SECONDS = 20.0

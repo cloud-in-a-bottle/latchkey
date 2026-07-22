@@ -3,12 +3,13 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import attr
 from loguru import logger
 
-from server.config import AppConfig
-from server.latchkey_runtime import LatchkeyRuntime
+from server.core.config import AppConfig
+from server.core.latchkey_runtime import LatchkeyRuntime
 
 # Pseudo-scope handled by this app itself (not passed to detent): metadata access.
 META_SCOPE = "latchkey-meta"
@@ -112,6 +113,30 @@ def parse_permissions_header(header_value: str | None) -> tuple[ScopeGrant, ...]
         else:
             logger.warning("ignoring unrecognized grant payload: {}", entry.get("grant"))
     return tuple(grants)
+
+
+@attr.s(auto_attribs=True, frozen=True)
+class ConsumerContext:
+    """The calling app's identity and granted permissions, as attested by the router."""
+
+    app_id: str
+    app_name: str
+    grants: tuple[ScopeGrant, ...]
+
+
+def build_grant_url(
+    own_url: str,
+    consumer: ConsumerContext,
+    grant: ScopeGrant | None = None,
+    return_to: str | None = None,
+) -> str:
+    """URL of the owner-facing consent page, pre-filled with the consumer and requested grant."""
+    params: dict[str, str] = {"consumer_id": consumer.app_id, "consumer_name": consumer.app_name}
+    if grant is not None:
+        params["grant"] = json.dumps(grant.as_payload())
+    if return_to is not None:
+        params["return_to"] = return_to
+    return f"{own_url}/grant?{urlencode(params)}"
 
 
 def has_meta_permission(grants: tuple[ScopeGrant, ...], permission: str) -> bool:

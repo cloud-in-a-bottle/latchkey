@@ -3,7 +3,7 @@ from typing import Any
 
 import attr
 
-from server.grants import GrantPayload
+from server.core.grants import GrantPayload
 
 
 def _validate_non_empty_str(_instance: Any, attribute: Any, value: Any) -> None:

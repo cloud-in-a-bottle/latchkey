@@ -1,11 +1,11 @@
 import attr
 from litestar.datastructures import State
 
-from server.browser_login import BrowserLoginManager
-from server.config import AppConfig
-from server.gateway_client import GatewayClient
-from server.grants import ConsumerPermissionFiles
-from server.latchkey_runtime import LatchkeyRuntime
+from server.core.browser_login import BrowserLoginManager
+from server.core.config import AppConfig
+from server.core.gateway_client import GatewayClient
+from server.core.grants import ConsumerPermissionFiles
+from server.core.latchkey_runtime import LatchkeyRuntime
 
 
 @attr.s(auto_attribs=True, frozen=True)

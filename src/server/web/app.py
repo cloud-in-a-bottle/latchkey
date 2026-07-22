@@ -15,30 +15,30 @@ from litestar.static_files import create_static_files_router
 from litestar.template import TemplateConfig
 from loguru import logger
 
-from server.api_models import ErrorBody
-from server.browser_login import BrowserLoginManager
-from server.config import load_config
-from server.config import novnc_dir
-from server.gateway_client import GatewayClient
-from server.grants import ConsumerPermissionFiles
-from server.latchkey_runtime import LatchkeyRuntime
-from server.routes.owner_api import approve_grant
-from server.routes.owner_api import auth_clear
-from server.routes.owner_api import auth_set
-from server.routes.owner_api import browser_login_start
-from server.routes.owner_api import browser_login_status
-from server.routes.owner_api import owner_service_info
-from server.routes.owner_api import services_register
-from server.routes.owner_api import status
-from server.routes.pages import connect_page
-from server.routes.pages import console
-from server.routes.pages import grant_page
-from server.routes.service_api import list_services
-from server.routes.service_api import proxy
-from server.routes.service_api import request_grant
-from server.routes.service_api import service_info
-from server.routes.vnc import vnc_bridge
-from server.state import AppServices
+from server.core.browser_login import BrowserLoginManager
+from server.core.config import load_config
+from server.core.config import novnc_dir
+from server.core.gateway_client import GatewayClient
+from server.core.grants import ConsumerPermissionFiles
+from server.core.latchkey_runtime import LatchkeyRuntime
+from server.web.api_models import ErrorBody
+from server.web.routes.owner_api import approve_grant
+from server.web.routes.owner_api import auth_clear
+from server.web.routes.owner_api import auth_set
+from server.web.routes.owner_api import browser_login_start
+from server.web.routes.owner_api import browser_login_status
+from server.web.routes.owner_api import owner_service_info
+from server.web.routes.owner_api import services_register
+from server.web.routes.owner_api import status
+from server.web.routes.pages import connect_page
+from server.web.routes.pages import console
+from server.web.routes.pages import grant_page
+from server.web.routes.service_api import list_services
+from server.web.routes.service_api import proxy
+from server.web.routes.service_api import request_grant
+from server.web.routes.service_api import service_info
+from server.web.routes.vnc import vnc_bridge
+from server.web.state import AppServices
 
 
 @attr.s(auto_attribs=True, frozen=True)

@@ -8,8 +8,11 @@ proxy so other apps in the compute space can call third-party APIs (Slack, GitHu
 
 The container runs three things:
 
-- **The front server** (litestar, `src/server/`) — the owner console, the cross-app service
-  endpoint, and the permission shim between OpenHost grants and latchkey.
+- **The front server** (litestar) — the owner console, the cross-app service endpoint, and the
+  permission shim between OpenHost grants and latchkey. Web glue lives in `src/server/web/`
+  (routes, request/response models, templates), framework-free logic in `src/server/core/`, unit
+  tests in `src/server/tests/`; `tests/` at the repo root holds the containerized integration
+  tests.
 - **`latchkey gateway`** on localhost — latchkey's own HTTP server, which injects stored
   credentials into proxied requests and enforces per-request permission policies via
   [detent](https://github.com/imbue-ai/detent). Only the front server can reach it (localhost +

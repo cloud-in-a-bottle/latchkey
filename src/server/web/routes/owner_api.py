@@ -1,28 +1,27 @@
 import shlex
 from typing import Any
 
-import httpx
 from litestar import Request
 from litestar import Response
 from litestar import get
 from litestar import post
 
-from server.api_models import ApproveGrantRequest
-from server.api_models import AuthClearRequest
-from server.api_models import AuthSetRequest
-from server.api_models import BrowserLoginStartRequest
-from server.api_models import BrowserLoginStatusBody
-from server.api_models import ErrorBody
-from server.api_models import OkBody
-from server.api_models import ServicesRegisterRequest
-from server.api_models import StatusBody
-from server.browser_login import LoginAlreadyRunningError
-from server.browser_login import LoginJob
-from server.gateway_client import GatewayRpcError
-from server.latchkey_runtime import LatchkeyCliError
-from server.state import services_from
-
-SERVICE_URL = "github.com/imbue-openhost/openhost-latchkey/services/latchkey"
+from server.core.browser_login import LoginAlreadyRunningError
+from server.core.browser_login import LoginJob
+from server.core.gateway_client import GatewayRpcError
+from server.core.latchkey_runtime import LatchkeyCliError
+from server.core.router_client import GrantCreationError
+from server.core.router_client import grant_app_scoped
+from server.web.api_models import ApproveGrantRequest
+from server.web.api_models import AuthClearRequest
+from server.web.api_models import AuthSetRequest
+from server.web.api_models import BrowserLoginStartRequest
+from server.web.api_models import BrowserLoginStatusBody
+from server.web.api_models import ErrorBody
+from server.web.api_models import OkBody
+from server.web.api_models import ServicesRegisterRequest
+from server.web.api_models import StatusBody
+from server.web.state import services_from
 
 
 def _cli_error(e: LatchkeyCliError) -> Response[ErrorBody]:
@@ -135,23 +134,8 @@ async def approve_grant(
 ) -> Response[OkBody] | Response[ErrorBody]:
     """Create the app-scoped grant in the router after the owner confirmed on the consent page."""
     services = services_from(request.app.state)
-    async with httpx.AsyncClient() as client:
-        router_response = await client.post(
-            f"{services.config.router_url}/api/permissions/v2/grant_app_scoped",
-            headers={"Authorization": f"Bearer {services.config.app_token}"},
-            json={
-                "consumer_app_id": data.consumer_app_id,
-                "service_url": SERVICE_URL,
-                "grant": data.grant.to_scope_grant().as_payload(),
-            },
-            timeout=10.0,
-        )
-    if router_response.status_code != 200:
-        return Response(
-            ErrorBody(
-                error="grant_failed",
-                message=f"router returned {router_response.status_code}: {router_response.text[:300]}",
-            ),
-            status_code=502,
-        )
+    try:
+        await grant_app_scoped(services.config, data.consumer_app_id, data.grant.to_scope_grant())
+    except GrantCreationError as e:
+        return Response(ErrorBody(error="grant_failed", message=str(e)), status_code=502)
     return Response(OkBody())

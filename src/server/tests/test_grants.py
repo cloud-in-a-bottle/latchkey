@@ -1,12 +1,16 @@
 import json
+from urllib.parse import parse_qs
+from urllib.parse import urlsplit
 
 import pytest
 
-from server.grants import ScopeGrant
-from server.grants import has_meta_permission
-from server.grants import parse_grant_payload
-from server.grants import parse_permissions_header
-from server.grants import permissions_config_json
+from server.core.grants import ConsumerContext
+from server.core.grants import ScopeGrant
+from server.core.grants import build_grant_url
+from server.core.grants import has_meta_permission
+from server.core.grants import parse_grant_payload
+from server.core.grants import parse_permissions_header
+from server.core.grants import permissions_config_json
 
 
 def test_parse_permissions_header_empty() -> None:
@@ -97,3 +101,16 @@ def test_permissions_config_includes_custom_schemas() -> None:
         "rules": [{"custom-scope": ["custom-get"]}],
         "schemas": {"custom-scope": schema},
     }
+
+
+def test_build_grant_url() -> None:
+    consumer = ConsumerContext(app_id="abc123", app_name="my-app", grants=())
+    grant = ScopeGrant(scope="slack-api", permissions=("slack-read-all",))
+    url = build_grant_url("https://latchkey.zone", consumer, grant=grant, return_to="https://my-app.zone/done")
+    split = urlsplit(url)
+    params = {k: v[0] for k, v in parse_qs(split.query).items()}
+    assert url.startswith("https://latchkey.zone/grant?")
+    assert params["consumer_id"] == "abc123"
+    assert params["consumer_name"] == "my-app"
+    assert params["return_to"] == "https://my-app.zone/done"
+    assert json.loads(params["grant"]) == {"scope": "slack-api", "permissions": ["slack-read-all"]}

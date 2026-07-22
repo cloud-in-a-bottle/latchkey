@@ -5,8 +5,8 @@ from litestar import Request
 from litestar import get
 from litestar.response import Template
 
-from server.grants import ScopeGrant
-from server.grants import parse_grant_payload
+from server.core.grants import ScopeGrant
+from server.core.grants import parse_grant_payload
 
 
 @get("/")

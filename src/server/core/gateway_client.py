@@ -2,7 +2,7 @@ from typing import Any
 
 import httpx
 
-from server.config import AppConfig
+from server.core.config import AppConfig
 
 PASSWORD_HEADER = "X-Latchkey-Gateway-Password"
 PERMISSIONS_OVERRIDE_HEADER = "X-Latchkey-Gateway-Permissions-Override"

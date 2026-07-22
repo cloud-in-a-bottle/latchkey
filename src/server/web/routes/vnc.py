@@ -6,7 +6,7 @@ from litestar import websocket
 from litestar.exceptions import WebSocketDisconnect
 from loguru import logger
 
-from server.state import services_from
+from server.web.state import services_from
 
 _READ_CHUNK = 65536
 
