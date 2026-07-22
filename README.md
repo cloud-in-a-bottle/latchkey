@@ -31,7 +31,7 @@ Consumers get exactly the access the owner granted (detent scope + permission sc
 credentials live only in this app, encrypted at rest (`LATCHKEY_ENCRYPTION_KEY` generated on first
 boot into app data).
 
-See [SERVICE_SPEC.md](SERVICE_SPEC.md) for the service interface and grant payload shape.
+See [services/latchkey/](services/latchkey/) for the service spec (openapi.yaml + grant semantics).
 
 ## Owner console
 

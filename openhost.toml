@@ -25,6 +25,6 @@ cpu_millicores = 1000
 app_data = true
 
 [[services.v2.provides]]
-service = "github.com/imbue-openhost/openhost-latchkey"
+service = "github.com/imbue-openhost/openhost-latchkey/services/latchkey"
 version = "0.1.0"
 endpoint = "/api/"

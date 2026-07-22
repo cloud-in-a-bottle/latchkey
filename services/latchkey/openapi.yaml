@@ -1,0 +1,212 @@
+openapi: 3.0.3
+info:
+  title: OpenHost Latchkey Service
+  description: |
+    Credential-injecting proxy to third-party HTTP APIs (Slack, GitHub, Gmail, ...), accessed by
+    consumer apps through the V2 service proxy. Credentials are stored by the provider app
+    ([latchkey](https://github.com/imbue-ai/latchkey)) and injected server-side; consumers never
+    see them.
+
+    **Service URL:** `github.com/imbue-openhost/openhost-latchkey/services/latchkey`
+
+    All requests are proxied through the openhost router. The router injects an
+    `X-OpenHost-Permissions` header with the consumer's granted permissions; the provider
+    translates them into a [detent](https://github.com/imbue-ai/detent) policy enforced on every
+    proxied request.
+
+    **Permission grant format:**
+    `{"scope": "<detent scope schema>", "permissions": ["<detent permission schema>", ...],
+    "schemas": {...}?}` — e.g. `{"scope": "slack-api", "permissions": ["slack-read-all"]}`.
+    The optional `schemas` object supplies custom detent request schemas (matchers over
+    `domain` / `method` / `path` / body) for services without built-in schemas (self-hosted or
+    runtime-registered). The pseudo-scope grant
+    `{"scope": "latchkey-meta", "permissions": ["services-read"]}` gates the service-listing
+    endpoints and is handled by the provider itself rather than detent.
+
+    Note detent's rule resolution: rules are evaluated top-to-bottom and the first rule whose
+    scope matches the request decides the outcome. Grants with the same scope name are merged
+    (permissions unioned); grants with different scope names whose schemas overlap can shadow
+    each other. Keep custom scope schemas disjoint (e.g. match domain *and* path prefix), or
+    reuse one scope name per service. See README.md for the full grant semantics and typical
+    consumer flow.
+  version: 0.1.0
+
+paths:
+  /proxy/{targetUrl}:
+    parameters:
+      - name: targetUrl
+        in: path
+        required: true
+        schema:
+          type: string
+        description: |
+          Absolute http(s) URL of the third-party endpoint, appended verbatim (including any
+          query string), e.g. `proxy/https://slack.com/api/conversations.list`.
+    get:
+      summary: Proxy a request with credentials injected
+      description: |
+        Any HTTP method is supported (GET shown as representative). Method, headers, query
+        string, and body are forwarded; hop-by-hop headers, `Authorization`, and `Cookie` are
+        stripped before the upstream call. The upstream response (including upstream errors) is
+        returned as-is.
+      responses:
+        "200":
+          description: Upstream response, passed through.
+        "400":
+          description: |
+            Gateway error — e.g. the URL matches no known service, or the owner has not stored
+            credentials for it. The `error` message says which.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: No grant covers this request.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermissionRequired"
+
+  /services:
+    get:
+      summary: List available services
+      description: Requires the `latchkey-meta` / `services-read` grant.
+      responses:
+        "200":
+          description: Service names latchkey knows about.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [services]
+                properties:
+                  services:
+                    type: array
+                    items:
+                      type: string
+                    example: ["slack", "github", "google-gmail"]
+        "403":
+          description: Missing the metadata grant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermissionRequired"
+
+  /services/{serviceName}:
+    parameters:
+      - name: serviceName
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Get service info and credential status
+      description: |
+        Requires the `latchkey-meta` / `services-read` grant. Use `credentialStatus` to decide
+        whether to prompt the owner to connect the service before calling it.
+      responses:
+        "200":
+          description: Latchkey's service info.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    example: built-in
+                  baseApiUrls:
+                    type: array
+                    items:
+                      type: string
+                  authOptions:
+                    type: array
+                    items:
+                      type: string
+                    example: ["browser", "set"]
+                  credentialStatus:
+                    type: string
+                    enum: [missing, valid, invalid, unknown]
+        "403":
+          description: Missing the metadata grant.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PermissionRequired"
+        "404":
+          description: Unknown service.
+
+  /grants/request:
+    post:
+      summary: Request an app-scoped grant
+      description: |
+        Returns a consent URL. Redirect the owner's browser to `grant_url`; the provider renders
+        a consent page describing the grant, creates the app-scoped grant in the router on
+        approval, and redirects back to `return_to`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grant]
+              properties:
+                grant:
+                  $ref: "#/components/schemas/Grant"
+                return_to:
+                  type: string
+                  description: URL on the consumer's subdomain to send the owner back to.
+      responses:
+        "200":
+          description: Consent URL created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [grant_url, required_grant]
+                properties:
+                  grant_url:
+                    type: string
+                  required_grant:
+                    type: object
+
+components:
+  schemas:
+    Grant:
+      type: object
+      required: [scope, permissions]
+      properties:
+        scope:
+          type: string
+          example: slack-api
+        permissions:
+          type: array
+          items:
+            type: string
+          example: ["slack-read-all"]
+        schemas:
+          type: object
+          additionalProperties:
+            type: object
+          description: Custom detent request schemas, keyed by schema name.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+    PermissionRequired:
+      type: object
+      required: [error, message, grant_url]
+      properties:
+        error:
+          type: string
+          enum: [permission_required]
+        message:
+          type: string
+        grant_url:
+          type: string
+          description: Owner-facing consent page URL.
+        required_grant:
+          type: object
+          description: Present when the provider knows exactly which grant is needed.

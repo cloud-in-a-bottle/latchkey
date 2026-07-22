@@ -18,6 +18,6 @@
 
 - if you run into any cases where the app test harness doesn't match the expected/real behavior of openhost, stop and mention this so that we can fix the test harness - don't just make some workaround to the issue.
 - if you run into cases where openhost itself doesn't behave as expected, also stop and mention this so we can open a PR there to fix upstream.
-- this app packages latchkey (github.com/imbue-ai/latchkey) as an OpenHost service provider. read README.md for the architecture and SERVICE_SPEC.md for the service interface. latchkey is installed as a pinned npm package in the Dockerfile; a reference checkout for reading its source is useful (`git clone https://github.com/imbue-ai/latchkey /tmp/latchkey-review`).
+- this app packages latchkey (github.com/imbue-ai/latchkey) as an OpenHost service provider. read README.md for the architecture and services/latchkey/ for the service interface (spec URL convention like the openhost repo's services/ folder). latchkey is installed as a pinned npm package in the Dockerfile; a reference checkout for reading its source is useful (`git clone https://github.com/imbue-ai/latchkey /tmp/latchkey-review`).
 - the front server always attaches a per-consumer permissions-override JWT when proxying to the latchkey gateway; the gateway's default permissions.json is deny-all on purpose. never weaken either side.
 - latchkey changes should be PRed upstream (it's an imbue repo); meanwhile npm can install from a fork branch. the upstream wishlist lives in README.md.

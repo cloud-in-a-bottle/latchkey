@@ -1,0 +1,3 @@
+[service]
+name = "latchkey"
+description = "Call third-party HTTP APIs with owner credentials injected by latchkey — consumers never see the secrets"

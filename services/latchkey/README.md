@@ -1,6 +1,9 @@
 # Latchkey service spec
 
-Service URL: `github.com/imbue-openhost/openhost-latchkey` — version `0.1.0`
+Service URL: `github.com/imbue-openhost/openhost-latchkey/services/latchkey` — version `0.1.0`
+
+The formal API spec lives in [openapi.yaml](openapi.yaml); this file covers the grant semantics
+and typical consumer flow.
 
 Lets consumer apps call third-party HTTP APIs (Slack, GitHub, Gmail, ...) with the owner's
 credentials injected by [latchkey](https://github.com/imbue-ai/latchkey), without the consumer ever
@@ -90,7 +93,7 @@ grant in the router on approval, and redirects back to `return_to`.
 
    ```toml
    [[services.v2.consumes]]
-   service = "github.com/imbue-openhost/openhost-latchkey"
+   service = "github.com/imbue-openhost/openhost-latchkey/services/latchkey"
    shortname = "latchkey"
    version = ">=0.1.0"
    grants = [

@@ -11,7 +11,7 @@ from consumer_app import call_service
 from consumer_app import write_consumer_app
 from openhost_test_harness import OpenhostStack
 
-SERVICE = "github.com/imbue-openhost/openhost-latchkey"
+SERVICE = "github.com/imbue-openhost/openhost-latchkey/services/latchkey"
 
 # Hostname at which app containers reach the test host (same alias the router itself uses).
 CONTAINER_HOST_ALIAS = "host.containers.internal"
