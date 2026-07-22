@@ -1,0 +1,30 @@
+[app]
+name = "latchkey"
+version = "0.1.0"
+description = "Credential-injecting proxy: apps call third-party APIs through latchkey without ever seeing the secrets"
+
+[runtime.container]
+image = "Dockerfile"
+port = 8080
+
+[routing]
+health_check = "/health"
+# No public_paths: the owner console is router-auth-gated, and service calls
+# arrive via the router's internal service proxy.
+
+[[links]]
+name = "Latchkey console"
+path = "/"
+
+[resources]
+# Chromium (for browser-based logins) needs headroom.
+memory_mb = 2048
+cpu_millicores = 1000
+
+[data]
+app_data = true
+
+[[services.v2.provides]]
+service = "github.com/imbue-openhost/openhost-latchkey/services/latchkey"
+version = "0.1.0"
+endpoint = "/api/"

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Connect {{ service_name }}{% endblock %}
+{% block content %}
+<h1>Connect {{ service_name }}</h1>
+<p id="cred-status" class="muted"></p>
+<div class="card" id="browser-card" style="display:none">
+  <h2 style="margin-top:0">Browser login</h2>
+  <p class="muted">A browser opens below. Log in to {{ service_name }} as usual — latchkey watches the
+  session, extracts API credentials once you're logged in, and closes the browser. Credentials are
+  stored encrypted inside this app and are never shown to other apps.</p>
+  <p><button class="primary" id="start" onclick="start()">Start login</button>
+     <span id="state" class="muted"></span></p>
+  <iframe id="vnc" style="display:none"
+    src="/novnc/vnc.html?autoconnect=1&resize=scale&path=owner/vnc"></iframe>
+</div>
+<div class="card">
+  <h2 style="margin-top:0">Manual credentials</h2>
+  <p class="muted" id="set-example">Stored as curl arguments.</p>
+  <textarea id="curl-args" rows="2" placeholder='-H "Authorization: Bearer ..."'></textarea>
+  <button class="primary" onclick="setCredentials()">Save credentials</button>
+  <span id="set-result" class="muted"></span>
+</div>
+<p><a href="/">&larr; back to console</a></p>
+{% endblock %}
+{% block script %}
+const serviceName = {{ service_name | tojson }};
+let polling = null;
+async function init() {
+  const r = await fetch(`/owner/api/service-info/${encodeURIComponent(serviceName)}`);
+  if (!r.ok) {
+    document.getElementById('cred-status').textContent = 'unknown service';
+    return;
+  }
+  const info = await r.json();
+  document.getElementById('cred-status').textContent =
+    `credentials: ${info.credentialStatus || 'unknown'}`;
+  if ((info.authOptions || []).includes('browser')) {
+    document.getElementById('browser-card').style.display = 'block';
+  }
+  if (info.setCredentialsExample) {
+    document.getElementById('set-example').innerHTML =
+      'Stored as curl arguments, e.g. <code></code>';
+    document.querySelector('#set-example code').textContent =
+      info.setCredentialsExample.replace(/^latchkey auth set \S+ /, '');
+  }
+}
+async function start() {
+  document.getElementById('start').disabled = true;
+  document.getElementById('vnc').style.display = 'block';
+  const r = await fetch('/owner/api/browser-login/start', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({service_name: serviceName})});
+  if (!r.ok) {
+    const body = await r.json();
+    document.getElementById('state').textContent = body.message || 'failed to start';
+    document.getElementById('start').disabled = false;
+    return;
+  }
+  document.getElementById('state').textContent = 'waiting for login…';
+  polling = setInterval(poll, 2000);
+}
+async function poll() {
+  const r = await fetch('/owner/api/browser-login/status');
+  const s = await r.json();
+  if (s.state === 'succeeded') {
+    clearInterval(polling);
+    document.getElementById('state').textContent = 'connected!';
+    document.getElementById('vnc').style.display = 'none';
+    init();
+  } else if (s.state === 'failed') {
+    clearInterval(polling);
+    document.getElementById('state').textContent = 'failed: ' + (s.error || 'unknown error');
+    document.getElementById('start').disabled = false;
+  }
+}
+async function setCredentials() {
+  const out = document.getElementById('set-result');
+  out.textContent = '...';
+  const r = await fetch('/owner/api/auth/set', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({service_name: serviceName,
+                          curl_args: document.getElementById('curl-args').value})});
+  const body = await r.json();
+  out.textContent = r.ok ? 'saved' : (body.message || 'failed');
+  init();
+}
+init();
+{% endblock %}

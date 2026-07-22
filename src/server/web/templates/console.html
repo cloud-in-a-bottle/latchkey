@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Latchkey</h1>
+<p class="muted">Connect third-party services here; other apps call them through latchkey
+without ever seeing the credentials.</p>
+<div id="gateway-warning"></div>
+<h2>Connected services</h2>
+<table id="connected"><tbody></tbody></table>
+<h2>Available services</h2>
+<p class="muted">Connect with a browser login where supported, or paste credentials manually.</p>
+<table id="available"><tbody></tbody></table>
+<div class="card">
+  <h2 style="margin-top:0">Register a custom service</h2>
+  <p class="muted">For self-hosted or unlisted services (credentials must then be set manually).</p>
+  <input id="reg-name" placeholder="service name (e.g. my-gitlab)">
+  <input id="reg-url" placeholder="base API URL (e.g. https://gitlab.example.com/api/v4/)">
+  <input id="reg-family" placeholder="service family (optional, e.g. gitlab)">
+  <button class="primary" onclick="registerService()">Register</button>
+  <span id="reg-result" class="muted"></span>
+</div>
+{% endblock %}
+{% block script %}
+async function refresh() {
+  const r = await fetch('/owner/api/status');
+  const s = await r.json();
+  if (!s.gateway_healthy) {
+    document.getElementById('gateway-warning').innerHTML =
+      '<div class="card" style="border-color:#b3261e">latchkey gateway is not running — check app logs</div>';
+    return;
+  }
+  // s.auth: {serviceName: {credentialType, credentialStatus}}
+  const connected = document.querySelector('#connected tbody');
+  connected.innerHTML = '';
+  const authed = Object.entries(s.auth || {});
+  if (authed.length === 0) connected.innerHTML = '<tr><td class="muted">none yet</td></tr>';
+  for (const [name, info] of authed) {
+    const status = info.credentialStatus || '';
+    connected.innerHTML +=
+      `<tr><td><a href="/connect/${name}">${name}</a></td><td class="status-${status}">${status}</td>` +
+      `<td><button onclick="clearAuth('${name}')">Disconnect</button></td></tr>`;
+  }
+  // s.services: array of service name strings
+  const available = document.querySelector('#available tbody');
+  available.innerHTML = '';
+  for (const name of (s.services || [])) {
+    available.innerHTML +=
+      `<tr><td>${name}</td>` +
+      `<td><a href="/connect/${name}"><button class="primary">Connect</button></a></td></tr>`;
+  }
+}
+async function clearAuth(name) {
+  await fetch('/owner/api/auth/clear', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({service_name: name})});
+  refresh();
+}
+async function registerService() {
+  const out = document.getElementById('reg-result');
+  out.textContent = '...';
+  const payload = {service_name: document.getElementById('reg-name').value,
+                   base_api_url: document.getElementById('reg-url').value};
+  const family = document.getElementById('reg-family').value;
+  if (family) payload.service_family = family;
+  const r = await fetch('/owner/api/services/register', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
+  const body = await r.json();
+  out.textContent = r.ok ? 'registered' : (body.message || 'failed');
+  refresh();
+}
+refresh();
+{% endblock %}
