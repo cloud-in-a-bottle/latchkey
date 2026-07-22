@@ -11,9 +11,16 @@ from server.core.gateway_client import GatewayRpcError
 
 
 class LoginState(StrEnum):
+    # One-time interactive setup some services need before login (e.g. Google flows create an
+    # OAuth client in the cloud console; latchkey's browser-prepare).
+    PREPARING = "preparing"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+
+    @property
+    def is_active(self) -> bool:
+        return self in (LoginState.PREPARING, LoginState.RUNNING)
 
 
 @attr.s(auto_attribs=True, frozen=True)
@@ -25,7 +32,11 @@ class LoginJob:
 
 
 class BrowserLoginManager:
-    """Runs `auth browser` flows through the gateway RPC, one at a time (there is one display)."""
+    """Runs `auth browser` flows through the gateway RPC, one at a time (there is one display).
+
+    Each job chains latchkey's two browser steps: `auth browser-prepare` (a no-op returning
+    alreadyPrepared for services that don't need it) and then `auth browser`.
+    """
 
     def __init__(self, gateway: GatewayClient) -> None:
         self._gateway = gateway
@@ -37,15 +48,25 @@ class BrowserLoginManager:
         return self._job
 
     def start(self, service_name: str) -> LoginJob:
-        if self._job is not None and self._job.state == LoginState.RUNNING:
+        if self._job is not None and self._job.state.is_active:
             raise LoginAlreadyRunningError(self._job.service_name)
-        job = LoginJob(service_name=service_name, state=LoginState.RUNNING, started_at=time.time())
+        job = LoginJob(service_name=service_name, state=LoginState.PREPARING, started_at=time.time())
         self._job = job
         self._task = asyncio.create_task(self._run(job))
         return job
 
+    async def wait_until_done(self) -> None:
+        if self._task is not None:
+            await self._task
+
     async def _run(self, job: LoginJob) -> None:
         try:
+            await self._gateway.rpc(
+                "auth browser-prepare",
+                {"serviceName": job.service_name},
+                timeout=BROWSER_LOGIN_TIMEOUT_SECONDS,
+            )
+            self._job = attr.evolve(job, state=LoginState.RUNNING)
             await self._gateway.rpc(
                 "auth browser",
                 {"serviceName": job.service_name},
