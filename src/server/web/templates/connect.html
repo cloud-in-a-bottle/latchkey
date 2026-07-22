@@ -56,13 +56,18 @@ async function start() {
     document.getElementById('start').disabled = false;
     return;
   }
-  document.getElementById('state').textContent = 'waiting for login…';
+  document.getElementById('state').textContent = 'starting…';
   polling = setInterval(poll, 2000);
 }
 async function poll() {
   const r = await fetch('/owner/api/browser-login/status');
   const s = await r.json();
-  if (s.state === 'succeeded') {
+  if (s.state === 'preparing') {
+    document.getElementById('state').textContent =
+      'one-time setup — log in below; some services (e.g. Google) then run a few minutes of automated setup';
+  } else if (s.state === 'running') {
+    document.getElementById('state').textContent = 'waiting for login…';
+  } else if (s.state === 'succeeded') {
     clearInterval(polling);
     document.getElementById('state').textContent = 'connected!';
     document.getElementById('vnc').style.display = 'none';
