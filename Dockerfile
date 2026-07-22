@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium \
         xvfb \
         x11vnc \
+        matchbox-window-manager \
         fonts-liberation \
         fonts-noto-color-emoji \
         fonts-noto-cjk \

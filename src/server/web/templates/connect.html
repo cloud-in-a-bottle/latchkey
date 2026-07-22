@@ -21,6 +21,8 @@
   <span id="set-result" class="muted"></span>
 </div>
 <p><a href="/">&larr; back to console</a></p>
+<textarea id="paste-proxy" tabindex="-1" aria-hidden="true"
+  style="position:fixed; top:0; left:0; width:1px; height:1px; opacity:0; padding:0; border:0;"></textarea>
 <script type="module">
 import RFB from '/novnc/core/rfb.js';
 import KeyTable from '/novnc/core/input/keysym.js';
@@ -61,44 +63,58 @@ function vncDisconnect() {
   }
 }
 
-// Local paste -> remote browser. On Ctrl/Cmd+V, stop noVNC from forwarding the raw keystroke
-// (Cmd maps to Super, which the remote browser ignores) but let the browser fire its native
-// paste event — reading clipboardData during that gesture needs no clipboard permission UI in
-// any browser (navigator.clipboard.readText would prompt in Chrome and pop a "Paste" confirm in
-// Firefox). Then push the text to the remote clipboard and replay Ctrl+V there.
+// Local paste -> remote browser. On Ctrl/Cmd+V we stop noVNC from forwarding the raw keystroke
+// (Cmd maps to Super, which the remote browser ignores) and move focus to a hidden textarea:
+// every browser delivers the native paste event to an editable target (Firefox never fires
+// paste on a canvas), and reading clipboardData during that event needs no clipboard
+// permission UI. Then push the text to the remote clipboard, replay Ctrl+V there, and hand
+// focus back to the viewer.
+const pasteProxy = document.getElementById('paste-proxy');
 let pasteFallbackTimer = null;
 
+function isEditable(element) {
+  return element instanceof HTMLElement && (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT');
+}
+
 function pasteToRemote(text) {
+  if (!rfb) return;
   if (text) rfb.clipboardPasteFrom(text);
   rfb.sendKey(KeyTable.XK_Control_L, 'ControlLeft', true);
   rfb.sendKey(KeyTable.XK_v, 'KeyV', true);
   rfb.sendKey(KeyTable.XK_v, 'KeyV', false);
   rfb.sendKey(KeyTable.XK_Control_L, 'ControlLeft', false);
+  rfb.focus();
 }
 
 window.addEventListener('keydown', (e) => {
   if (!rfb || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'v') return;
+  if (isEditable(e.target) && e.target !== pasteProxy) return;  // pasting into a page field
   e.stopPropagation();
-  // If no paste event follows (some browsers skip it without an editable focus), fall back to
-  // the async clipboard API and its permission UI.
+  pasteProxy.value = '';
+  pasteProxy.focus();
+  // If no paste event follows, fall back to the async clipboard API and its permission UI.
   clearTimeout(pasteFallbackTimer);
   pasteFallbackTimer = setTimeout(async () => {
-    if (!rfb) return;
     try {
       pasteToRemote(await navigator.clipboard.readText());
     } catch {
-      document.getElementById('state').textContent = 'clipboard access denied — allow it in the browser prompt';
+      if (rfb) rfb.focus();
+      document.getElementById('state').textContent =
+        'could not read the clipboard — allow clipboard access in the browser';
     }
-  }, 300);
+  }, 400);
 }, true);
 
 document.addEventListener('paste', (e) => {
   if (!rfb) return;
+  if (isEditable(e.target) && e.target !== pasteProxy) return;  // pasting into a page field
   clearTimeout(pasteFallbackTimer);
-  pasteFallbackTimer = null;
   e.preventDefault();
   pasteToRemote(e.clipboardData ? e.clipboardData.getData('text/plain') : '');
 });
+
+// Test hook: lets browser tests exercise the paste plumbing with a stub in place of the RFB.
+window.__vncTest = { setRfb: (value) => { rfb = value; }, getRfb: () => rfb };
 
 async function init() {
   const r = await fetch(`/owner/api/service-info/${encodeURIComponent(serviceName)}`);

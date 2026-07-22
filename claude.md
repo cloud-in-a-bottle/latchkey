@@ -1,5 +1,5 @@
 - read README.md and style_guide.md at the beginning of every session.
-- on first init, run `just setup` — this installs dependencies, the pre-commit hooks, and the playwright chromium browser. pre-commit runs ruff and mypy on commit.
+- on first init, run `just setup` — this installs dependencies, the pre-commit hooks, and the playwright browsers (chromium + firefox; tests exercise clipboard behavior in both). pre-commit runs ruff and mypy on commit.
 - use uv for all python work (`uv run ...`, `uv add ...`, `uv sync`).
 - this is an OpenHost app. `openhost.toml` is the app manifest.
 - the app is a litestar/hypercorn backend that serves on port 8080 and exposes a `/health` endpoint. see "deploying & debugging on openhost" below.

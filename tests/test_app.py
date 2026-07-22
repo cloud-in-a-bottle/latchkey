@@ -9,6 +9,7 @@ from consumer_app import grant_payload_from_url
 from consumer_app import parse_grant_url_query
 from openhost_test_harness import OpenhostStack
 from playwright.sync_api import Page
+from playwright.sync_api import Playwright
 from playwright.sync_api import expect
 
 META_GRANT = {"scope": "latchkey-meta", "permissions": ["services-read"]}
@@ -197,3 +198,56 @@ def test_vnc_websocket_bridge_reaches_x11vnc(stack: OpenhostStack) -> None:
             assert chunk != b"", "connection closed before RFB banner"
             frame += chunk
     assert b"RFB " in frame
+
+
+PASTE_PROBE = "sekrit-paste-12345"
+
+_STUB_RFB = """() => {
+    window.__vncTest.setRfb({
+        calls: [],
+        clipboardPasteFrom(text) { this.calls.push(['clipboard', text]); },
+        sendKey(keysym, code, down) { this.calls.push(['key', code, down]); },
+        focus() { this.calls.push(['focus']); },
+        disconnect() {},
+    });
+}"""
+
+_PASTED_OK = f"""() => {{
+    const rfb = window.__vncTest && window.__vncTest.getRfb();
+    if (!rfb || !rfb.calls) return false;
+    return rfb.calls.some(c => c[0] === 'clipboard' && c[1] === '{PASTE_PROBE}')
+        && rfb.calls.some(c => c[0] === 'key' && c[1] === 'KeyV' && c[2] === true);
+}}"""
+
+
+def _drive_paste(stack: OpenhostStack, page: Page) -> None:
+    """On the connect page with a stub RFB: copy real text to the browser clipboard via a
+    temporary input, press Ctrl/Cmd+V outside any input, and expect the stub to receive the
+    remote-clipboard write plus the replayed Ctrl+V — with no clipboard permission UI."""
+    stack.playwright_login(page)
+    page.goto(f"{stack.url}/connect/slack")
+    page.wait_for_function("() => !!window.__vncTest")
+    page.evaluate(
+        "() => { const i = document.createElement('input'); i.id = 'clip-src'; document.body.appendChild(i); }"
+    )
+    page.fill("#clip-src", PASTE_PROBE)
+    page.focus("#clip-src")
+    page.keyboard.press("ControlOrMeta+a")
+    page.keyboard.press("ControlOrMeta+c")
+    page.evaluate("() => document.getElementById('clip-src').remove()")
+    page.evaluate(_STUB_RFB)
+    page.click("h1")
+    page.keyboard.press("ControlOrMeta+v")
+    page.wait_for_function(_PASTED_OK, timeout=5000)
+
+
+def test_paste_interception_chromium(stack: OpenhostStack, page: Page) -> None:
+    _drive_paste(stack, page)
+
+
+def test_paste_interception_firefox(stack: OpenhostStack, playwright: Playwright) -> None:
+    browser = playwright.firefox.launch()
+    try:
+        _drive_paste(stack, browser.new_page())
+    finally:
+        browser.close()
