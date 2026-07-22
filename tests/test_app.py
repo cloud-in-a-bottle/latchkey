@@ -161,9 +161,10 @@ def test_browser_login_page_and_status(stack: OpenhostStack, page: Page) -> None
     assert response.status_code == 200
     assert response.json()["state"] == "idle"
 
-    # noVNC assets are served for the connect page's viewer iframe.
-    response = owner.get(f"{stack.url}/novnc/vnc.html", timeout=30)
-    assert response.status_code == 200
+    # noVNC modules the connect page's embedded viewer imports.
+    for asset in ("core/rfb.js", "core/input/keysym.js"):
+        response = owner.get(f"{stack.url}/novnc/{asset}", timeout=30)
+        assert response.status_code == 200, asset
 
     stack.playwright_login(page)
     page.goto(f"{stack.url}/connect/slack")
