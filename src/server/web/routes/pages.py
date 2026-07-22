@@ -1,7 +1,5 @@
 import json
-from typing import Any
 
-from litestar import Request
 from litestar import get
 from litestar.response import Template
 
@@ -19,8 +17,8 @@ async def connect_page(service_name: str) -> Template:
     return Template("connect.html", context={"service_name": service_name})
 
 
-def _parse_grant_param(value: object) -> ScopeGrant | None:
-    if not isinstance(value, str) or value == "":
+def _parse_grant_param(value: str) -> ScopeGrant | None:
+    if value == "":
         return None
     try:
         payload = json.loads(value)
@@ -30,19 +28,23 @@ def _parse_grant_param(value: object) -> ScopeGrant | None:
 
 
 @get("/grant")
-async def grant_page(request: Request[Any, Any, Any]) -> Template:
-    params = request.query_params
-    grant = _parse_grant_param(params.get("grant"))
+async def grant_page(
+    consumer_id: str = "",
+    consumer_name: str = "",
+    grant: str = "",
+    return_to: str = "",
+) -> Template:
+    parsed_grant = _parse_grant_param(grant)
     return Template(
         "grant.html",
         context={
-            "consumer_id": str(params.get("consumer_id", "")),
-            "consumer_name": str(params.get("consumer_name", "")),
-            "return_to": str(params.get("return_to", "")),
-            "grant": grant,
-            "grant_payload": grant.as_payload() if grant is not None else None,
-            "schemas_pretty": json.dumps(dict(grant.as_payload()).get("schemas"), indent=2)
-            if grant is not None and grant.schemas
+            "consumer_id": consumer_id,
+            "consumer_name": consumer_name,
+            "return_to": return_to,
+            "grant": parsed_grant,
+            "grant_payload": parsed_grant.as_payload() if parsed_grant is not None else None,
+            "schemas_pretty": json.dumps(dict(parsed_grant.as_payload()).get("schemas"), indent=2)
+            if parsed_grant is not None and parsed_grant.schemas
             else None,
         },
     )

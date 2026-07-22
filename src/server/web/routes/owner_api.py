@@ -1,7 +1,6 @@
 import shlex
 from typing import Any
 
-from litestar import Request
 from litestar import Response
 from litestar import get
 from litestar import post
@@ -21,7 +20,7 @@ from server.web.api_models import ErrorBody
 from server.web.api_models import OkBody
 from server.web.api_models import ServicesRegisterRequest
 from server.web.api_models import StatusBody
-from server.web.state import services_from
+from server.web.state import AppServices
 
 
 def _cli_error(e: LatchkeyCliError) -> Response[ErrorBody]:
@@ -35,8 +34,7 @@ def _login_status(login: LoginJob | None) -> BrowserLoginStatusBody:
 
 
 @get("/owner/api/status")
-async def status(request: Request[Any, Any, Any]) -> StatusBody:
-    services = services_from(request.app.state)
+async def status(services: AppServices) -> StatusBody:
     gateway_healthy = await services.gateway.is_healthy()
     auth: dict[str, Any] | None = None
     service_names: list[str] | None = None
@@ -53,8 +51,7 @@ async def status(request: Request[Any, Any, Any]) -> StatusBody:
 
 
 @post("/owner/api/auth/set", status_code=200)
-async def auth_set(request: Request[Any, Any, Any], data: AuthSetRequest) -> Response[OkBody] | Response[ErrorBody]:
-    services = services_from(request.app.state)
+async def auth_set(services: AppServices, data: AuthSetRequest) -> Response[OkBody] | Response[ErrorBody]:
     try:
         await services.runtime.run_cli("auth", "set", data.service_name, *shlex.split(data.curl_args))
     except LatchkeyCliError as e:
@@ -63,10 +60,7 @@ async def auth_set(request: Request[Any, Any, Any], data: AuthSetRequest) -> Res
 
 
 @post("/owner/api/auth/clear", status_code=200)
-async def auth_clear(
-    request: Request[Any, Any, Any], data: AuthClearRequest
-) -> Response[OkBody] | Response[ErrorBody]:
-    services = services_from(request.app.state)
+async def auth_clear(services: AppServices, data: AuthClearRequest) -> Response[OkBody] | Response[ErrorBody]:
     args = ["auth", "clear"]
     if data.service_name is not None:
         args.append(data.service_name)
@@ -79,10 +73,9 @@ async def auth_clear(
 
 @post("/owner/api/services/register", status_code=200)
 async def services_register(
-    request: Request[Any, Any, Any], data: ServicesRegisterRequest
+    services: AppServices, data: ServicesRegisterRequest
 ) -> Response[OkBody] | Response[ErrorBody]:
     """Register a runtime service (e.g. a self-hosted GitLab) so credentials can be stored for it."""
-    services = services_from(request.app.state)
     args = ["services", "register", data.service_name, f"--base-api-url={data.base_api_url}"]
     if data.service_family is not None:
         args.append(f"--service-family={data.service_family}")
@@ -97,9 +90,8 @@ async def services_register(
 
 @post("/owner/api/browser-login/start", status_code=200)
 async def browser_login_start(
-    request: Request[Any, Any, Any], data: BrowserLoginStartRequest
+    services: AppServices, data: BrowserLoginStartRequest
 ) -> Response[BrowserLoginStatusBody] | Response[ErrorBody]:
-    services = services_from(request.app.state)
     await services.runtime.ensure_gateway_running()
     try:
         job = services.browser_logins.start(data.service_name)
@@ -109,14 +101,12 @@ async def browser_login_start(
 
 
 @get("/owner/api/browser-login/status")
-async def browser_login_status(request: Request[Any, Any, Any]) -> BrowserLoginStatusBody:
-    services = services_from(request.app.state)
+async def browser_login_status(services: AppServices) -> BrowserLoginStatusBody:
     return _login_status(services.browser_logins.current)
 
 
 @get("/owner/api/service-info/{service_name:str}")
-async def owner_service_info(request: Request[Any, Any, Any], service_name: str) -> Response[Any]:
-    services = services_from(request.app.state)
+async def owner_service_info(services: AppServices, service_name: str) -> Response[Any]:
     await services.runtime.ensure_gateway_running()
     try:
         # Latchkey RPC passthrough; the shape is latchkey's (see services/latchkey/openapi.yaml).
@@ -129,11 +119,8 @@ async def owner_service_info(request: Request[Any, Any, Any], service_name: str)
 
 
 @post("/owner/api/grants/approve", status_code=200)
-async def approve_grant(
-    request: Request[Any, Any, Any], data: ApproveGrantRequest
-) -> Response[OkBody] | Response[ErrorBody]:
+async def approve_grant(services: AppServices, data: ApproveGrantRequest) -> Response[OkBody] | Response[ErrorBody]:
     """Create the app-scoped grant in the router after the owner confirmed on the consent page."""
-    services = services_from(request.app.state)
     try:
         await grant_app_scoped(services.config, data.consumer_app_id, data.grant.to_scope_grant())
     except GrantCreationError as e:

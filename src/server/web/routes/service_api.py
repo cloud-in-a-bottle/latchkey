@@ -16,7 +16,6 @@ from server.core.grants import ScopeGrant
 from server.core.grants import build_grant_url
 from server.core.grants import detent_grants
 from server.core.grants import has_meta_permission
-from server.core.grants import parse_permissions_header
 from server.core.proxying import PROXY_PATH_PREFIX
 from server.core.proxying import extract_proxy_target
 from server.core.proxying import forwardable_request_headers
@@ -28,25 +27,8 @@ from server.web.api_models import RequestGrantRequest
 from server.web.api_models import RequiredGrant
 from server.web.api_models import ServicesListBody
 from server.web.state import AppServices
-from server.web.state import services_from
 
 _META_GRANT = ScopeGrant(scope=META_SCOPE, permissions=(PERMISSION_SERVICES_READ,))
-
-
-class NotAServiceCallError(Exception):
-    pass
-
-
-def consumer_context(request: Request[Any, Any, Any]) -> ConsumerContext:
-    app_id = request.headers.get("X-OpenHost-Consumer-Id")
-    app_name = request.headers.get("X-OpenHost-Consumer-Name")
-    if app_id is None or app_name is None:
-        raise NotAServiceCallError()
-    return ConsumerContext(
-        app_id=app_id,
-        app_name=app_name,
-        grants=parse_permissions_header(request.headers.get("X-OpenHost-Permissions")),
-    )
 
 
 def _permission_required_response(
@@ -72,11 +54,8 @@ def _not_a_service_call() -> Response[ErrorBody]:
 
 
 @get("/api/services")
-async def list_services(request: Request[Any, Any, Any]) -> Response[Any]:
-    services = services_from(request.app.state)
-    try:
-        consumer = consumer_context(request)
-    except NotAServiceCallError:
+async def list_services(services: AppServices, consumer: ConsumerContext | None) -> Response[Any]:
+    if consumer is None:
         return _not_a_service_call()
     if not has_meta_permission(consumer.grants, PERMISSION_SERVICES_READ):
         return _permission_required_response(
@@ -88,11 +67,8 @@ async def list_services(request: Request[Any, Any, Any]) -> Response[Any]:
 
 
 @get("/api/services/{service_name:str}")
-async def service_info(request: Request[Any, Any, Any], service_name: str) -> Response[Any]:
-    services = services_from(request.app.state)
-    try:
-        consumer = consumer_context(request)
-    except NotAServiceCallError:
+async def service_info(services: AppServices, consumer: ConsumerContext | None, service_name: str) -> Response[Any]:
+    if consumer is None:
         return _not_a_service_call()
     if not has_meta_permission(consumer.grants, PERMISSION_SERVICES_READ):
         return _permission_required_response(
@@ -111,12 +87,9 @@ async def service_info(request: Request[Any, Any, Any], service_name: str) -> Re
 
 @post("/api/grants/request", status_code=200)
 async def request_grant(
-    request: Request[Any, Any, Any], data: RequestGrantRequest
+    services: AppServices, consumer: ConsumerContext | None, data: RequestGrantRequest
 ) -> Response[GrantUrlBody] | Response[ErrorBody]:
-    services = services_from(request.app.state)
-    try:
-        consumer = consumer_context(request)
-    except NotAServiceCallError:
+    if consumer is None:
         return _not_a_service_call()
     grant_url = build_grant_url(
         services.config.own_url, consumer, grant=data.grant.to_scope_grant(), return_to=data.return_to
@@ -128,11 +101,13 @@ async def request_grant(
     f"{PROXY_PATH_PREFIX}{{target_url:path}}",
     http_method=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
 )
-async def proxy(request: Request[Any, Any, Any], target_url: str) -> Response[Any]:
-    services = services_from(request.app.state)
-    try:
-        consumer = consumer_context(request)
-    except NotAServiceCallError:
+async def proxy(
+    request: Request[Any, Any, Any],
+    services: AppServices,
+    consumer: ConsumerContext | None,
+    target_url: str,
+) -> Response[Any]:
+    if consumer is None:
         return _not_a_service_call()
 
     # Use the raw ASGI path so percent-encoding survives litestar's path-parameter decoding.

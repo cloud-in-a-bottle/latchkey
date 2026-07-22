@@ -6,15 +6,14 @@ from litestar import websocket
 from litestar.exceptions import WebSocketDisconnect
 from loguru import logger
 
-from server.web.state import services_from
+from server.web.state import AppServices
 
 _READ_CHUNK = 65536
 
 
 @websocket("/owner/vnc")
-async def vnc_bridge(socket: WebSocket[Any, Any, Any]) -> None:
+async def vnc_bridge(socket: WebSocket[Any, Any, Any], services: AppServices) -> None:
     """Bridge the owner's noVNC websocket to the local x11vnc server (RFB over binary frames)."""
-    services = services_from(socket.app.state)
     await socket.accept()
     try:
         reader, writer = await asyncio.open_connection(services.config.vnc_host, services.config.vnc_port)

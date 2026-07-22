@@ -10,6 +10,7 @@ from litestar import Request
 from litestar import Response
 from litestar import get
 from litestar.contrib.jinja import JinjaTemplateEngine
+from litestar.di import Provide
 from litestar.exceptions import ValidationException
 from litestar.static_files import create_static_files_router
 from litestar.template import TemplateConfig
@@ -39,6 +40,8 @@ from server.web.routes.service_api import request_grant
 from server.web.routes.service_api import service_info
 from server.web.routes.vnc import vnc_bridge
 from server.web.state import AppServices
+from server.web.state import provide_consumer
+from server.web.state import provide_services
 
 
 @attr.s(auto_attribs=True, frozen=True)
@@ -115,6 +118,10 @@ def _validation_exception_handler(request: Request[Any, Any, Any], exc: Validati
 app = Litestar(
     route_handlers=_route_handlers(),  # type: ignore[arg-type]
     lifespan=[lifespan],
+    dependencies={
+        "services": Provide(provide_services, sync_to_thread=False),
+        "consumer": Provide(provide_consumer, sync_to_thread=False),
+    },
     template_config=TemplateConfig(directory=Path(__file__).parent / "templates", engine=JinjaTemplateEngine),
     exception_handlers={ValidationException: _validation_exception_handler},
 )
