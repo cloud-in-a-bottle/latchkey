@@ -6,6 +6,8 @@
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
            max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #1a1a2e; }
+    /* Toggled while the VNC viewer is visible so the remote screen gets real estate. */
+    body.wide { max-width: min(96vw, 1560px); }
     h1 { font-size: 1.4rem; }  h2 { font-size: 1.1rem; margin-top: 2rem; }
     table { border-collapse: collapse; width: 100%; }
     td, th { text-align: left; padding: 0.4rem 0.8rem; border-bottom: 1px solid #e0e0e8; }
@@ -18,8 +20,9 @@
     .muted { color: #777; font-size: 0.9rem; }
     .status-valid { color: #0a7d36; }  .status-invalid, .status-missing { color: #b3261e; }
     .card { border: 1px solid #e0e0e8; border-radius: 10px; padding: 1rem 1.4rem; margin: 1rem 0; }
-    #vnc-screen { border: 1px solid #c0c0d0; border-radius: 8px; width: 100%; height: 640px;
-                  overflow: hidden; background: #222; }
+    /* Matches the Xvfb geometry (see entrypoint.sh) so the scaled screen has no letterboxing. */
+    #vnc-screen { border: 1px solid #c0c0d0; border-radius: 8px; width: 100%; aspect-ratio: 8 / 5;
+                  height: auto; overflow: hidden; background: #222; }
     code { background: #f2f2f7; padding: 0.1rem 0.3rem; border-radius: 4px; }
     pre code { display: block; padding: 0.6rem; overflow-x: auto; }
   </style>

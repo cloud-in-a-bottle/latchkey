@@ -32,6 +32,7 @@ let loginActive = false;
 
 function vncConnect() {
   if (rfb) return;
+  document.body.classList.add('wide');
   const screen = document.getElementById('vnc-screen');
   screen.style.display = 'block';
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/owner/vnc';
@@ -51,6 +52,7 @@ function vncConnect() {
 }
 
 function vncDisconnect() {
+  document.body.classList.remove('wide');
   document.getElementById('vnc-screen').style.display = 'none';
   if (rfb) {
     const active = rfb;
@@ -59,26 +61,44 @@ function vncDisconnect() {
   }
 }
 
-// Local paste -> remote browser: intercept Ctrl/Cmd+V before noVNC forwards the raw keystroke
-// (Cmd maps to Super, which the remote browser ignores), push the local clipboard to the remote
-// one, then replay Ctrl+V there.
-window.addEventListener('keydown', async (e) => {
-  if (!rfb || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'v') return;
-  e.preventDefault();
-  e.stopPropagation();
-  let text = '';
-  try {
-    text = await navigator.clipboard.readText();
-  } catch {
-    document.getElementById('state').textContent = 'clipboard access denied — allow it in the browser prompt';
-    return;
-  }
+// Local paste -> remote browser. On Ctrl/Cmd+V, stop noVNC from forwarding the raw keystroke
+// (Cmd maps to Super, which the remote browser ignores) but let the browser fire its native
+// paste event — reading clipboardData during that gesture needs no clipboard permission UI in
+// any browser (navigator.clipboard.readText would prompt in Chrome and pop a "Paste" confirm in
+// Firefox). Then push the text to the remote clipboard and replay Ctrl+V there.
+let pasteFallbackTimer = null;
+
+function pasteToRemote(text) {
   if (text) rfb.clipboardPasteFrom(text);
   rfb.sendKey(KeyTable.XK_Control_L, 'ControlLeft', true);
   rfb.sendKey(KeyTable.XK_v, 'KeyV', true);
   rfb.sendKey(KeyTable.XK_v, 'KeyV', false);
   rfb.sendKey(KeyTable.XK_Control_L, 'ControlLeft', false);
+}
+
+window.addEventListener('keydown', (e) => {
+  if (!rfb || !(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'v') return;
+  e.stopPropagation();
+  // If no paste event follows (some browsers skip it without an editable focus), fall back to
+  // the async clipboard API and its permission UI.
+  clearTimeout(pasteFallbackTimer);
+  pasteFallbackTimer = setTimeout(async () => {
+    if (!rfb) return;
+    try {
+      pasteToRemote(await navigator.clipboard.readText());
+    } catch {
+      document.getElementById('state').textContent = 'clipboard access denied — allow it in the browser prompt';
+    }
+  }, 300);
 }, true);
+
+document.addEventListener('paste', (e) => {
+  if (!rfb) return;
+  clearTimeout(pasteFallbackTimer);
+  pasteFallbackTimer = null;
+  e.preventDefault();
+  pasteToRemote(e.clipboardData ? e.clipboardData.getData('text/plain') : '');
+});
 
 async function init() {
   const r = await fetch(`/owner/api/service-info/${encodeURIComponent(serviceName)}`);
