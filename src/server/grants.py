@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 import attr
 from loguru import logger
@@ -17,12 +18,50 @@ _CONSUMER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 @attr.s(auto_attribs=True, frozen=True)
-class ScopeGrant:
-    """One granted payload: a detent scope schema name plus permission schema names allowed within it.
+class GrantPayload:
+    """The wire shape of one grant, as declared in consumer manifests and stored by the router.
 
-    `schemas` optionally defines custom detent request schemas (JSON, serialized per-name) for services
-    that detent's builtin schemas don't cover, e.g. self-hosted or runtime-registered services.
+    `schemas` optionally defines custom detent request schemas for services detent's builtin schemas
+    don't cover, e.g. self-hosted or runtime-registered services. attrs validators are the single
+    source of validation: litestar runs them when binding request bodies, and header parsing goes
+    through them via `parse_grant_payload`.
     """
+
+    scope: str = attr.ib()
+    permissions: list[str] = attr.ib()
+    schemas: dict[str, dict[str, Any]] | None = attr.ib(default=None)
+
+    @scope.validator
+    def _validate_scope(self, _attribute: Any, value: object) -> None:
+        if not isinstance(value, str) or value == "":
+            raise ValueError("'scope' must be a non-empty string")
+
+    @permissions.validator
+    def _validate_permissions(self, _attribute: Any, value: object) -> None:
+        if not isinstance(value, list) or not value or not all(isinstance(p, str) and p != "" for p in value):
+            raise ValueError("'permissions' must be a non-empty list of non-empty strings")
+
+    @schemas.validator
+    def _validate_schemas(self, _attribute: Any, value: object) -> None:
+        if value is None:
+            return
+        if not isinstance(value, dict) or not all(
+            isinstance(name, str) and name != "" and isinstance(schema, dict) for name, schema in value.items()
+        ):
+            raise ValueError("'schemas' must map non-empty schema names to schema objects")
+
+    def to_scope_grant(self) -> "ScopeGrant":
+        schemas = self.schemas or {}
+        return ScopeGrant(
+            scope=self.scope,
+            permissions=tuple(self.permissions),
+            schemas=tuple((name, json.dumps(schema, sort_keys=True)) for name, schema in schemas.items()),
+        )
+
+
+@attr.s(auto_attribs=True, frozen=True)
+class ScopeGrant:
+    """Internal, hashable form of a grant: permissions as a tuple, schemas serialized per-name."""
 
     scope: str
     permissions: tuple[str, ...]
@@ -34,43 +73,29 @@ class ScopeGrant:
             payload["schemas"] = {name: json.loads(schema) for name, schema in self.schemas}
         return payload
 
-
-def _parse_schemas(raw: object) -> tuple[tuple[str, str], ...] | None:
-    if raw is None:
-        return ()
-    if not isinstance(raw, dict):
-        return None
-    schemas: list[tuple[str, str]] = []
-    for name, schema in raw.items():
-        if not isinstance(name, str) or name == "" or not isinstance(schema, dict):
-            return None
-        schemas.append((name, json.dumps(schema, sort_keys=True)))
-    return tuple(schemas)
+    def to_payload_model(self) -> GrantPayload:
+        return GrantPayload(
+            scope=self.scope,
+            permissions=list(self.permissions),
+            schemas={name: json.loads(schema) for name, schema in self.schemas} if self.schemas else None,
+        )
 
 
 def parse_grant_payload(payload: object) -> ScopeGrant | None:
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not all(isinstance(key, str) for key in payload):
         return None
-    scope = payload.get("scope")
-    permissions = payload.get("permissions")
-    schemas = _parse_schemas(payload.get("schemas"))
-    if (
-        isinstance(scope, str)
-        and scope != ""
-        and isinstance(permissions, list)
-        and permissions != []
-        and all(isinstance(p, str) and p != "" for p in permissions)
-        and schemas is not None
-    ):
-        return ScopeGrant(scope=scope, permissions=tuple(permissions), schemas=schemas)
-    return None
+    try:
+        grant = GrantPayload(**payload)
+    except (TypeError, ValueError):
+        return None
+    return grant.to_scope_grant()
 
 
 def parse_permissions_header(header_value: str | None) -> tuple[ScopeGrant, ...]:
     """Parse the router-injected X-OpenHost-Permissions header into the grants this service understands.
 
-    Entries whose payload doesn't match {"scope": str, "permissions": [str, ...], "schemas"?: {...}} are
-    ignored (they may belong to other versions of this spec); malformed JSON fails loudly.
+    Entries whose payload doesn't match the GrantPayload shape are ignored (they may belong to other
+    versions of this spec); malformed JSON fails loudly.
     """
     if header_value is None or header_value.strip() == "":
         return ()

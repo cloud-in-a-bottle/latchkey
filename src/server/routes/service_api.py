@@ -11,6 +11,12 @@ from litestar import post
 from litestar import route
 from loguru import logger
 
+from server.api_models import ErrorBody
+from server.api_models import GrantUrlBody
+from server.api_models import PermissionRequiredBody
+from server.api_models import RequestGrantRequest
+from server.api_models import RequiredGrant
+from server.api_models import ServicesListBody
 from server.gateway_client import GatewayRpcError
 from server.gateway_client import is_permission_denial
 from server.grants import META_SCOPE
@@ -18,7 +24,6 @@ from server.grants import PERMISSION_SERVICES_READ
 from server.grants import ScopeGrant
 from server.grants import detent_grants
 from server.grants import has_meta_permission
-from server.grants import parse_grant_payload
 from server.grants import parse_permissions_header
 from server.state import AppServices
 from server.state import services_from
@@ -99,19 +104,21 @@ def _permission_required_response(
     consumer: ConsumerContext,
     message: str,
     grant: ScopeGrant | None = None,
-) -> Response[dict[str, Any]]:
-    body: dict[str, Any] = {
-        "error": "permission_required",
-        "message": message,
-        "grant_url": _grant_url(services, consumer, grant=grant),
-    }
-    if grant is not None:
-        body["required_grant"] = {"grant": grant.as_payload(), "scope": "app"}
-    return Response(body, status_code=403)
+) -> Response[PermissionRequiredBody]:
+    return Response(
+        PermissionRequiredBody(
+            message=message,
+            grant_url=_grant_url(services, consumer, grant=grant),
+            required_grant=RequiredGrant(grant=grant.to_payload_model()) if grant is not None else None,
+        ),
+        status_code=403,
+    )
 
 
-def _bad_request(message: str) -> Response[dict[str, Any]]:
-    return Response({"error": "bad_request", "message": message}, status_code=400)
+def _not_a_service_call() -> Response[ErrorBody]:
+    return Response(
+        ErrorBody(error="bad_request", message="not a service call: consumer headers missing"), status_code=400
+    )
 
 
 @get("/api/services")
@@ -120,17 +127,14 @@ async def list_services(request: Request[Any, Any, Any]) -> Response[Any]:
     try:
         consumer = consumer_context(request)
     except NotAServiceCallError:
-        return _bad_request("not a service call: consumer headers missing")
+        return _not_a_service_call()
     if not has_meta_permission(consumer.grants, PERMISSION_SERVICES_READ):
         return _permission_required_response(
-            services,
-            consumer,
-            "listing services requires the metadata grant",
-            grant=_META_GRANT,
+            services, consumer, "listing services requires the metadata grant", grant=_META_GRANT
         )
     await services.runtime.ensure_gateway_running()
     result = await services.gateway.rpc("services list")
-    return Response({"services": result})
+    return Response(ServicesListBody(services=result))
 
 
 @get("/api/services/{service_name:str}")
@@ -139,45 +143,37 @@ async def service_info(request: Request[Any, Any, Any], service_name: str) -> Re
     try:
         consumer = consumer_context(request)
     except NotAServiceCallError:
-        return _bad_request("not a service call: consumer headers missing")
+        return _not_a_service_call()
     if not has_meta_permission(consumer.grants, PERMISSION_SERVICES_READ):
         return _permission_required_response(
-            services,
-            consumer,
-            "service info requires the metadata grant",
-            grant=_META_GRANT,
+            services, consumer, "service info requires the metadata grant", grant=_META_GRANT
         )
     await services.runtime.ensure_gateway_running()
     try:
+        # Latchkey RPC passthrough; the shape is latchkey's (see services/latchkey/openapi.yaml).
         result = await services.gateway.rpc("services info", {"serviceName": service_name})
     except GatewayRpcError as e:
         if e.status_code == 400:
-            return Response({"error": "unknown_service", "message": e.message}, status_code=404)
+            return Response(ErrorBody(error="unknown_service", message=e.message), status_code=404)
         raise
     return Response(result)
 
 
-@post("/api/grants/request")
-async def request_grant(request: Request[Any, Any, Any]) -> Response[Any]:
+@post("/api/grants/request", status_code=200)
+async def request_grant(
+    request: Request[Any, Any, Any], data: RequestGrantRequest
+) -> Response[GrantUrlBody] | Response[ErrorBody]:
     services = services_from(request.app.state)
     try:
         consumer = consumer_context(request)
     except NotAServiceCallError:
-        return _bad_request("not a service call: consumer headers missing")
-    body = await request.json()
-    return_to = body.get("return_to")
-    if return_to is not None and not isinstance(return_to, str):
-        return _bad_request("'return_to' must be a string")
-    grant = parse_grant_payload(body.get("grant"))
-    if grant is None:
-        return _bad_request('\'grant\' must be {"scope": str, "permissions": [str, ...], "schemas"?: {name: schema}}')
-    grant_url = _grant_url(services, consumer, grant=grant, return_to=return_to)
+        return _not_a_service_call()
+    grant = data.grant.to_scope_grant()
     return Response(
-        {
-            "grant_url": grant_url,
-            "required_grant": {"grant": grant.as_payload(), "scope": "app"},
-        },
-        status_code=200,
+        GrantUrlBody(
+            grant_url=_grant_url(services, consumer, grant=grant, return_to=data.return_to),
+            required_grant=RequiredGrant(grant=data.grant),
+        )
     )
 
 
@@ -190,14 +186,17 @@ async def proxy(request: Request[Any, Any, Any], target_url: str) -> Response[An
     try:
         consumer = consumer_context(request)
     except NotAServiceCallError:
-        return _bad_request("not a service call: consumer headers missing")
+        return _not_a_service_call()
 
     # Rebuild the target from the raw ASGI path so percent-encoding survives litestar's
     # path-parameter decoding.
     raw_path: bytes = request.scope["raw_path"]
     raw = raw_path.decode("latin-1")
     if not raw.startswith(PROXY_PATH_PREFIX):
-        return _bad_request(f"proxy path must start with {PROXY_PATH_PREFIX}")
+        return Response(
+            ErrorBody(error="bad_request", message=f"proxy path must start with {PROXY_PATH_PREFIX}"),
+            status_code=400,
+        )
     target = raw[len(PROXY_PATH_PREFIX) :]
     # Proxies (including the router) may collapse "//" in paths; restore the scheme separator.
     if re.match(r"^https?:/[^/]", target):
@@ -206,13 +205,17 @@ async def proxy(request: Request[Any, Any, Any], target_url: str) -> Response[An
     if query:
         target = f"{target}?{query}"
     if not target.startswith(("http://", "https://")):
-        return _bad_request("target must be an absolute http(s) URL, e.g. /api/proxy/https://slack.com/api/...")
+        return Response(
+            ErrorBody(
+                error="bad_request",
+                message="target must be an absolute http(s) URL, e.g. /api/proxy/https://slack.com/api/...",
+            ),
+            status_code=400,
+        )
 
     if not detent_grants(consumer.grants):
         return _permission_required_response(
-            services,
-            consumer,
-            "no API access grants; request one for the scope you need",
+            services, consumer, "no API access grants; request one for the scope you need"
         )
 
     jwt = await services.consumer_files.jwt_for(consumer.app_id, consumer.grants)

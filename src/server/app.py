@@ -1,13 +1,18 @@
 import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 import attr
 from litestar import Litestar
+from litestar import Request
+from litestar import Response
 from litestar import get
+from litestar.exceptions import ValidationException
 from litestar.static_files import create_static_files_router
 from loguru import logger
 
+from server.api_models import ErrorBody
 from server.browser_login import BrowserLoginManager
 from server.config import load_config
 from server.config import novnc_dir
@@ -98,4 +103,14 @@ def _route_handlers() -> list[object]:
     return handlers
 
 
-app = Litestar(route_handlers=_route_handlers(), lifespan=[lifespan])  # type: ignore[arg-type]
+def _validation_exception_handler(request: Request[Any, Any, Any], exc: ValidationException) -> Response[ErrorBody]:
+    """Keep the documented {"error": "bad_request", "message": ...} shape for binding failures."""
+    messages = [str(e["message"]) for e in (exc.extra or []) if isinstance(e, dict) and "message" in e]
+    return Response(ErrorBody(error="bad_request", message="; ".join(messages) or exc.detail), status_code=400)
+
+
+app = Litestar(
+    route_handlers=_route_handlers(),  # type: ignore[arg-type]
+    lifespan=[lifespan],
+    exception_handlers={ValidationException: _validation_exception_handler},
+)

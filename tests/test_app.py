@@ -159,7 +159,7 @@ def test_browser_login_page_and_status(stack: OpenhostStack, page: Page) -> None
     owner = stack.owner_session
     response = owner.get(f"{stack.url}/owner/api/browser-login/status", timeout=30)
     assert response.status_code == 200
-    assert response.json() == {"state": "idle"}
+    assert response.json()["state"] == "idle"
 
     # noVNC assets are served for the connect page's viewer iframe.
     response = owner.get(f"{stack.url}/novnc/vnc.html", timeout=30)
