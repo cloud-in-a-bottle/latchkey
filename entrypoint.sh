@@ -3,7 +3,8 @@
 # server (which itself spawns and supervises the latchkey gateway).
 set -euo pipefail
 
-SCREEN_GEOMETRY="${LATCHKEY_SCREEN_GEOMETRY:-1280x800x24}"
+# 8:5, matching #vnc-screen's aspect-ratio; wide enough that Chromium's default window fits.
+SCREEN_GEOMETRY="${LATCHKEY_SCREEN_GEOMETRY:-1600x1000x24}"
 DISPLAY_NUM="${DISPLAY#:}"
 
 Xvfb ":${DISPLAY_NUM}" -screen 0 "${SCREEN_GEOMETRY}" -nolisten tcp &

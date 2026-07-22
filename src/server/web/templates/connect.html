@@ -32,6 +32,7 @@ let loginActive = false;
 
 function vncConnect() {
   if (rfb) return;
+  document.body.classList.add('wide');
   const screen = document.getElementById('vnc-screen');
   screen.style.display = 'block';
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/owner/vnc';
@@ -51,6 +52,7 @@ function vncConnect() {
 }
 
 function vncDisconnect() {
+  document.body.classList.remove('wide');
   document.getElementById('vnc-screen').style.display = 'none';
   if (rfb) {
     const active = rfb;
