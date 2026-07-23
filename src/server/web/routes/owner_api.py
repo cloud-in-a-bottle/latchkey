@@ -1,10 +1,14 @@
+import math
 import shlex
+import time
 from typing import Any
 
 from litestar import Response
 from litestar import get
 from litestar import post
+from loguru import logger
 
+from server.core.browser_login import LOGIN_MAX_SECONDS
 from server.core.browser_login import LoginAlreadyRunningError
 from server.core.browser_login import LoginJob
 from server.core.gateway_client import GatewayRpcError
@@ -27,26 +31,41 @@ def _cli_error(e: LatchkeyCliError) -> Response[ErrorBody]:
     return Response(ErrorBody(error="bad_request", message=str(e)), status_code=400)
 
 
-def _login_status(login: LoginJob | None) -> BrowserLoginStatusBody:
+def _login_status(login: LoginJob | None, viewer_connected: bool = False) -> BrowserLoginStatusBody:
     if login is None:
-        return BrowserLoginStatusBody(state="idle")
-    return BrowserLoginStatusBody(state=login.state.value, service=login.service_name, error=login.error)
+        return BrowserLoginStatusBody(state="idle", viewer_connected=viewer_connected)
+    return BrowserLoginStatusBody(
+        state=login.state.value, service=login.service_name, error=login.error, viewer_connected=viewer_connected
+    )
+
+
+def _login_busy_message(service_name: str, login: LoginJob | None) -> str:
+    message = f"a browser login for '{service_name}' is already running — only one can run at a time."
+    remaining = LOGIN_MAX_SECONDS - (time.time() - login.started_at) if login is not None else LOGIN_MAX_SECONDS
+    minutes = max(1, math.ceil(remaining / 60))
+    return f"{message} Close the tab running it, or wait for it to finish (at most {minutes} min)."
 
 
 @get("/owner/api/status")
 async def status(services: AppServices) -> StatusBody:
-    gateway_healthy = await services.gateway.is_healthy()
     auth: dict[str, Any] | None = None
     service_names: list[str] | None = None
-    if gateway_healthy:
+    try:
+        # Starts the idle-stopped gateway on demand.
         auth = await services.gateway.rpc("auth list")
         service_names = await services.gateway.rpc("services list")
+        gateway_healthy = True
+    except Exception as e:
+        logger.warning("gateway unavailable for status: {}", e)
+        gateway_healthy = False
     login = services.browser_logins.current
     return StatusBody(
         gateway_healthy=gateway_healthy,
         auth=auth,
         services=service_names,
-        browser_login=_login_status(login) if login is not None else None,
+        browser_login=_login_status(login, viewer_connected=services.display.viewer_connected)
+        if login is not None
+        else None,
     )
 
 
@@ -92,22 +111,26 @@ async def services_register(
 async def browser_login_start(
     services: AppServices, data: BrowserLoginStartRequest
 ) -> Response[BrowserLoginStatusBody] | Response[ErrorBody]:
-    await services.runtime.ensure_gateway_running()
     try:
         job = services.browser_logins.start(data.service_name)
     except LoginAlreadyRunningError as e:
-        return Response(ErrorBody(error="login_already_running", message=str(e)), status_code=409)
-    return Response(_login_status(job))
+        return Response(
+            ErrorBody(
+                error="login_already_running",
+                message=_login_busy_message(e.service_name, services.browser_logins.current),
+            ),
+            status_code=409,
+        )
+    return Response(_login_status(job, viewer_connected=services.display.viewer_connected))
 
 
 @get("/owner/api/browser-login/status")
 async def browser_login_status(services: AppServices) -> BrowserLoginStatusBody:
-    return _login_status(services.browser_logins.current)
+    return _login_status(services.browser_logins.current, viewer_connected=services.display.viewer_connected)
 
 
 @get("/owner/api/service-info/{service_name:str}")
 async def owner_service_info(services: AppServices, service_name: str) -> Response[Any]:
-    await services.runtime.ensure_gateway_running()
     try:
         # Latchkey RPC passthrough; the shape is latchkey's (see services/latchkey/openapi.yaml).
         result = await services.gateway.rpc("services info", {"serviceName": service_name})

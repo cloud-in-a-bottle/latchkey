@@ -6,6 +6,7 @@ from litestar.datastructures import State
 
 from server.core.browser_login import BrowserLoginManager
 from server.core.config import AppConfig
+from server.core.display import DisplayManager
 from server.core.gateway_client import GatewayClient
 from server.core.grants import ConsumerContext
 from server.core.grants import ConsumerPermissionFiles
@@ -20,6 +21,7 @@ class AppServices:
     gateway: GatewayClient
     consumer_files: ConsumerPermissionFiles
     browser_logins: BrowserLoginManager
+    display: DisplayManager
 
 
 def services_from(state: State) -> AppServices:

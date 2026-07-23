@@ -3,6 +3,7 @@ from typing import Any
 import httpx
 
 from server.core.config import AppConfig
+from server.core.latchkey_runtime import LatchkeyRuntime
 
 PASSWORD_HEADER = "X-Latchkey-Gateway-Password"
 PERMISSIONS_OVERRIDE_HEADER = "X-Latchkey-Gateway-Permissions-Override"
@@ -24,19 +25,15 @@ class GatewayRpcError(Exception):
 
 
 class GatewayClient:
-    def __init__(self, config: AppConfig) -> None:
+    """Client for the local gateway; every call starts the (idle-stopped) gateway on demand."""
+
+    def __init__(self, config: AppConfig, runtime: LatchkeyRuntime) -> None:
         self._config = config
+        self._runtime = runtime
         self._client = httpx.AsyncClient(base_url=config.gateway_url)
 
     async def close(self) -> None:
         await self._client.aclose()
-
-    async def is_healthy(self) -> bool:
-        try:
-            response = await self._client.get("/", headers=self._base_headers(), timeout=2.0)
-        except httpx.HTTPError:
-            return False
-        return response.status_code == 200
 
     def _base_headers(self) -> dict[str, str]:
         return {PASSWORD_HEADER: self._config.gateway_password}
@@ -47,7 +44,8 @@ class GatewayClient:
         body: dict[str, Any] = {"command": command}
         if params is not None:
             body["params"] = params
-        response = await self._client.post("/latchkey/", json=body, headers=self._base_headers(), timeout=timeout)
+        async with self._runtime.gateway_use():
+            response = await self._client.post("/latchkey/", json=body, headers=self._base_headers(), timeout=timeout)
         payload = response.json()
         if response.status_code != 200:
             raise GatewayRpcError(response.status_code, str(payload.get("error", "unknown error")))
@@ -65,13 +63,14 @@ class GatewayClient:
         request_headers = list(headers)
         request_headers.append((PASSWORD_HEADER, self._config.gateway_password))
         request_headers.append((PERMISSIONS_OVERRIDE_HEADER, permissions_jwt))
-        return await self._client.request(
-            method,
-            f"/gateway/{target_url}",
-            headers=request_headers,
-            content=content if content else None,
-            timeout=PROXY_TIMEOUT_SECONDS,
-        )
+        async with self._runtime.gateway_use():
+            return await self._client.request(
+                method,
+                f"/gateway/{target_url}",
+                headers=request_headers,
+                content=content if content else None,
+                timeout=PROXY_TIMEOUT_SECONDS,
+            )
 
 
 def is_permission_denial(response: httpx.Response) -> bool:
