@@ -107,6 +107,7 @@ class BrowserLoginStatusBody:
     state: str
     service: str | None = None
     error: str | None = None
+    viewer_connected: bool = False
 
 
 @attr.s(auto_attribs=True, frozen=True)

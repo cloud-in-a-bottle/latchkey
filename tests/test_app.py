@@ -1,5 +1,6 @@
 import base64
 import socket
+import time
 from urllib.parse import urlsplit
 
 import httpx
@@ -173,10 +174,9 @@ def test_browser_login_page_and_status(stack: OpenhostStack, page: Page) -> None
     expect(page.locator("#browser-card")).to_be_visible(timeout=15000)
 
 
-def test_vnc_websocket_bridge_reaches_x11vnc(stack: OpenhostStack) -> None:
-    """A raw websocket handshake on /owner/vnc should yield x11vnc's RFB banner, proving the
-    Xvfb + x11vnc stack is up and the bridge connects to it."""
-    split = urlsplit(stack.app_url)
+def _vnc_ws_connect(app_url: str) -> tuple[socket.socket, bytes]:
+    """Open a raw websocket to /owner/vnc; returns the socket and any bytes read past the 101."""
+    split = urlsplit(app_url)
     assert split.hostname is not None and split.port is not None
     key = base64.b64encode(b"0123456789abcdef").decode()
     request = (
@@ -184,20 +184,51 @@ def test_vnc_websocket_bridge_reaches_x11vnc(stack: OpenhostStack) -> None:
         "Upgrade: websocket\r\nConnection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
     )
-    with socket.create_connection((split.hostname, split.port), timeout=15) as conn:
-        conn.sendall(request.encode())
-        conn.settimeout(15)
-        data = b""
-        # Read the 101 response headers, then the first websocket frame (x11vnc's RFB greeting).
-        while b"\r\n\r\n" not in data:
-            data += conn.recv(4096)
-        assert data.startswith(b"HTTP/1.1 101"), data[:100]
-        frame = data.split(b"\r\n\r\n", 1)[1]
+    conn = socket.create_connection((split.hostname, split.port), timeout=15)
+    conn.sendall(request.encode())
+    conn.settimeout(15)
+    data = b""
+    while b"\r\n\r\n" not in data:
+        data += conn.recv(4096)
+    assert data.startswith(b"HTTP/1.1 101"), data[:100]
+    return conn, data.split(b"\r\n\r\n", 1)[1]
+
+
+def _viewer_connected(stack: OpenhostStack) -> bool:
+    response = stack.owner_session.get(f"{stack.url}/owner/api/browser-login/status", timeout=30)
+    assert response.status_code == 200
+    return bool(response.json()["viewer_connected"])
+
+
+def test_vnc_websocket_bridge_reaches_x11vnc(stack: OpenhostStack) -> None:
+    """A raw websocket handshake on /owner/vnc should yield x11vnc's RFB banner, proving the
+    on-demand Xvfb + x11vnc stack comes up and the bridge connects to it. A second websocket
+    must be rejected while the first is connected (single viewer slot)."""
+    conn, frame = _vnc_ws_connect(stack.app_url)
+    with conn:
+        # The first websocket frame is x11vnc's RFB greeting.
         while b"RFB " not in frame:
             chunk = conn.recv(4096)
             assert chunk != b"", "connection closed before RFB banner"
             frame += chunk
-    assert b"RFB " in frame
+
+        assert _viewer_connected(stack)
+        conn2, frame2 = _vnc_ws_connect(stack.app_url)
+        with conn2:
+            while b"already open" not in frame2:
+                chunk = conn2.recv(4096)
+                if chunk == b"":
+                    break
+                frame2 += chunk
+            # 0x88: websocket close frame — the extra viewer is turned away, not bridged.
+            assert frame2[0] == 0x88, frame2[:30]
+            assert b"already open" in frame2
+
+    # Closing the viewer frees the slot.
+    deadline = time.time() + 15
+    while _viewer_connected(stack):
+        assert time.time() < deadline, "viewer slot not released after disconnect"
+        time.sleep(0.5)
 
 
 PASTE_PROBE = "sekrit-paste-12345"

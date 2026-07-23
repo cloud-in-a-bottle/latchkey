@@ -30,6 +30,8 @@ class AppConfig:
     # Idle seconds before the reaper stops the gateway / display stack; <= 0 keeps them running.
     gateway_idle_seconds: float
     display_idle_seconds: float
+    # Hard cap on one VNC viewer connection, so a stuck client can't hold the display stack forever.
+    vnc_max_session_seconds: float
 
     @property
     def own_url(self) -> str:
@@ -69,6 +71,7 @@ def load_config() -> AppConfig:
         screen_geometry=os.environ.get("LATCHKEY_SCREEN_GEOMETRY", "1600x1000x24"),
         gateway_idle_seconds=float(os.environ.get("LATCHKEY_GATEWAY_IDLE_SECONDS", "300")),
         display_idle_seconds=float(os.environ.get("LATCHKEY_DISPLAY_IDLE_SECONDS", "60")),
+        vnc_max_session_seconds=float(os.environ.get("LATCHKEY_VNC_MAX_SESSION_SECONDS", "1800")),
     )
 
 

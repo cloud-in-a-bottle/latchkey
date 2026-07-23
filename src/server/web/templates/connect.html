@@ -49,8 +49,24 @@ function vncConnect() {
   rfb.addEventListener('connect', () => rfb.focus());
   rfb.addEventListener('disconnect', () => {
     rfb = null;
-    if (loginActive) setTimeout(vncConnect, 2000);
+    if (loginActive) {
+      warnIfViewerElsewhere();
+      setTimeout(vncConnect, 2000);
+    }
   });
+}
+
+// Only one VNC viewer may be connected at a time (the server rejects extras, so a stray
+// tab can't hold the browser stack up). If that's why we got disconnected, say so.
+async function warnIfViewerElsewhere() {
+  try {
+    const r = await fetch('/owner/api/browser-login/status');
+    const s = await r.json();
+    if (s.viewer_connected) {
+      document.getElementById('state').textContent =
+        'the login screen is open in another tab — only one viewer is allowed; close other tabs to see it here';
+    }
+  } catch {}
 }
 
 function vncDisconnect() {

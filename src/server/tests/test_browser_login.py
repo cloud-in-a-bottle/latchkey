@@ -9,6 +9,7 @@ from server.core.browser_login import LoginAlreadyRunningError
 from server.core.browser_login import LoginState
 from server.core.config import AppConfig
 from server.core.display import DisplayManager
+from server.core.display import ViewerBusyError
 from server.core.gateway_client import GatewayClient
 from server.core.gateway_client import GatewayRpcError
 from server.core.latchkey_runtime import LatchkeyRuntime
@@ -30,6 +31,7 @@ def _config() -> AppConfig:
         screen_geometry="1600x1000x24",
         gateway_idle_seconds=300,
         display_idle_seconds=60,
+        vnc_max_session_seconds=1800,
     )
 
 
@@ -82,6 +84,22 @@ def test_login_runs_prepare_then_browser() -> None:
         # The login started the display stack and released it when done.
         assert display.starts == 1
         assert display._active_uses == 0
+
+    asyncio.run(scenario())
+
+
+def test_single_vnc_viewer_slot() -> None:
+    async def scenario() -> None:
+        display = FakeDisplay()
+        async with display.viewer():
+            assert display.viewer_connected
+            with pytest.raises(ViewerBusyError):
+                async with display.viewer():
+                    pass
+        # Released: a new viewer may connect.
+        assert not display.viewer_connected
+        async with display.viewer():
+            assert display.viewer_connected
 
     asyncio.run(scenario())
 

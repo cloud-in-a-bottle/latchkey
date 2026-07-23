@@ -10,6 +10,9 @@ from server.core.gateway_client import BROWSER_LOGIN_TIMEOUT_SECONDS
 from server.core.gateway_client import GatewayClient
 from server.core.gateway_client import GatewayRpcError
 
+# Worst-case wall time for a login job: the prepare and browser phases each get the RPC timeout.
+LOGIN_MAX_SECONDS = 2 * BROWSER_LOGIN_TIMEOUT_SECONDS
+
 
 class LoginState(StrEnum):
     # One-time interactive setup some services need before login (e.g. Google flows create an

@@ -19,6 +19,10 @@ class DisplayStartError(RuntimeError):
     pass
 
 
+class ViewerBusyError(RuntimeError):
+    pass
+
+
 class DisplayManager:
     """On-demand virtual display stack (Xvfb + window manager + x11vnc) for browser logins.
 
@@ -32,10 +36,28 @@ class DisplayManager:
         self._lock = asyncio.Lock()
         self._active_uses = 0
         self._last_use = 0.0
+        self._viewer_active = False
 
     @property
     def running(self) -> bool:
         return bool(self._processes) and all(p.returncode is None for p in self._processes)
+
+    @property
+    def viewer_connected(self) -> bool:
+        return self._viewer_active
+
+    @asynccontextmanager
+    async def viewer(self) -> AsyncIterator[None]:
+        """The single VNC viewer slot: one connected client at a time, so a stray extra tab
+        can't hold the display stack (and its memory) up alongside the active one."""
+        if self._viewer_active:
+            raise ViewerBusyError("a VNC viewer is already connected")
+        self._viewer_active = True
+        try:
+            async with self.use():
+                yield
+        finally:
+            self._viewer_active = False
 
     @asynccontextmanager
     async def use(self) -> AsyncIterator[None]:

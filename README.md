@@ -27,6 +27,12 @@ connects — and a reaper stops them again after an idle period, so an idle app 
 Python process. Idle windows: `LATCHKEY_GATEWAY_IDLE_SECONDS` (default 300) and
 `LATCHKEY_DISPLAY_IDLE_SECONDS` (default 60); `<= 0` disables the idle stop.
 
+There is also at most one copy of the browser stack at a time, so memory stays capped: one login
+flow (extra starts get a 409 telling the owner to close the other tab or wait), one connected VNC
+viewer (extra websockets are rejected; the connect page explains), and viewer sessions are capped
+at `LATCHKEY_VNC_MAX_SESSION_SECONDS` (default 1800) so a stuck client can't hold the display
+stack up forever.
+
 Request path for consumers:
 
 ```
