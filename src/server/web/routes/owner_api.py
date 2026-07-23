@@ -4,6 +4,7 @@ from typing import Any
 from litestar import Response
 from litestar import get
 from litestar import post
+from loguru import logger
 
 from server.core.browser_login import LoginAlreadyRunningError
 from server.core.browser_login import LoginJob
@@ -35,12 +36,16 @@ def _login_status(login: LoginJob | None) -> BrowserLoginStatusBody:
 
 @get("/owner/api/status")
 async def status(services: AppServices) -> StatusBody:
-    gateway_healthy = await services.gateway.is_healthy()
     auth: dict[str, Any] | None = None
     service_names: list[str] | None = None
-    if gateway_healthy:
+    try:
+        # Starts the idle-stopped gateway on demand.
         auth = await services.gateway.rpc("auth list")
         service_names = await services.gateway.rpc("services list")
+        gateway_healthy = True
+    except Exception as e:
+        logger.warning("gateway unavailable for status: {}", e)
+        gateway_healthy = False
     login = services.browser_logins.current
     return StatusBody(
         gateway_healthy=gateway_healthy,
@@ -92,7 +97,6 @@ async def services_register(
 async def browser_login_start(
     services: AppServices, data: BrowserLoginStartRequest
 ) -> Response[BrowserLoginStatusBody] | Response[ErrorBody]:
-    await services.runtime.ensure_gateway_running()
     try:
         job = services.browser_logins.start(data.service_name)
     except LoginAlreadyRunningError as e:
@@ -107,7 +111,6 @@ async def browser_login_status(services: AppServices) -> BrowserLoginStatusBody:
 
 @get("/owner/api/service-info/{service_name:str}")
 async def owner_service_info(services: AppServices, service_name: str) -> Response[Any]:
-    await services.runtime.ensure_gateway_running()
     try:
         # Latchkey RPC passthrough; the shape is latchkey's (see services/latchkey/openapi.yaml).
         result = await services.gateway.rpc("services info", {"serviceName": service_name})

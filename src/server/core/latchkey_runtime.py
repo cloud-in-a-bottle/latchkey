@@ -2,7 +2,10 @@ import asyncio
 import base64
 import os
 import secrets
+import signal
 from asyncio.subprocess import Process
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import attr
 import httpx
@@ -39,6 +42,8 @@ class LatchkeyRuntime:
         self._encryption_key: str | None = None
         self._gateway_process: Process | None = None
         self._gateway_lock = asyncio.Lock()
+        self._active_uses = 0
+        self._last_use = 0.0
 
     def prepare(self) -> None:
         self._config.latchkey_home.mkdir(parents=True, exist_ok=True)
@@ -135,8 +140,12 @@ class LatchkeyRuntime:
             "--port",
             str(self._config.gateway_port),
             env=self._env(extra={"LATCHKEY_GATEWAY_LISTEN_PASSWORD": self._config.gateway_password}),
+            # Own session/group, so stopping the gateway also kills any browser
+            # it spawned for a login flow (nothing lingers holding memory).
+            start_new_session=True,
         )
         logger.info("started latchkey gateway on {}:{}", self._config.gateway_host, self._config.gateway_port)
+        self._last_use = asyncio.get_running_loop().time()
         if wait_healthy:
             await self._wait_gateway_healthy()
 
@@ -163,23 +172,53 @@ class LatchkeyRuntime:
         await self.stop_gateway()
         await self.start_gateway()
 
-    async def ensure_gateway_running(self) -> None:
-        process = self._gateway_process
-        if process is None or process.returncode is not None:
+    @asynccontextmanager
+    async def gateway_use(self) -> AsyncIterator[None]:
+        """Start the gateway if needed and hold off the idle reaper for the duration."""
+        self._active_uses += 1
+        try:
             await self.start_gateway()
+            yield
+        finally:
+            self._active_uses -= 1
+            self._last_use = asyncio.get_running_loop().time()
+
+    async def stop_gateway_if_idle(self) -> None:
+        idle_seconds = self._config.gateway_idle_seconds
+        if idle_seconds <= 0 or self._active_uses > 0 or not self.gateway_running:
+            return
+        if asyncio.get_running_loop().time() - self._last_use < idle_seconds:
+            return
+        async with self._gateway_lock:
+            if self._active_uses > 0:
+                return
+            logger.info("stopping idle latchkey gateway")
+            await self._stop_gateway_locked()
 
     async def stop_gateway(self) -> None:
         async with self._gateway_lock:
-            process = self._gateway_process
-            self._gateway_process = None
-            if process is None or process.returncode is not None:
-                return
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=15.0)
-            except TimeoutError:
-                process.kill()
+            await self._stop_gateway_locked()
+
+    async def _stop_gateway_locked(self) -> None:
+        process = self._gateway_process
+        self._gateway_process = None
+        if process is None or process.returncode is not None:
+            return
+        _terminate_group(process, signal.SIGTERM)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=15.0)
+        except TimeoutError:
+            _terminate_group(process, signal.SIGKILL)
+            await process.wait()
 
     @property
     def gateway_running(self) -> bool:
         return self._gateway_process is not None and self._gateway_process.returncode is None
+
+
+def _terminate_group(process: Process, sig: signal.Signals) -> None:
+    # The process was started in its own session, so the group id is its pid.
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass

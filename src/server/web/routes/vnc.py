@@ -6,6 +6,7 @@ from litestar import websocket
 from litestar.exceptions import WebSocketDisconnect
 from loguru import logger
 
+from server.core.display import DisplayStartError
 from server.web.state import AppServices
 
 _READ_CHUNK = 65536
@@ -13,8 +14,20 @@ _READ_CHUNK = 65536
 
 @websocket("/owner/vnc")
 async def vnc_bridge(socket: WebSocket[Any, Any, Any], services: AppServices) -> None:
-    """Bridge the owner's noVNC websocket to the local x11vnc server (RFB over binary frames)."""
+    """Bridge the owner's noVNC websocket to the local x11vnc server (RFB over binary frames).
+
+    The display stack is on-demand; a connected viewer starts it and holds it up.
+    """
     await socket.accept()
+    try:
+        async with services.display.use():
+            await _bridge(socket, services)
+    except DisplayStartError as e:
+        logger.warning("could not start display stack: {}", e)
+        await socket.close(code=1011, reason="VNC server unavailable")
+
+
+async def _bridge(socket: WebSocket[Any, Any, Any], services: AppServices) -> None:
     try:
         reader, writer = await asyncio.open_connection(services.config.vnc_host, services.config.vnc_port)
     except OSError as e:

@@ -19,6 +19,7 @@ from loguru import logger
 from server.core.browser_login import BrowserLoginManager
 from server.core.config import load_config
 from server.core.config import novnc_dir
+from server.core.display import DisplayManager
 from server.core.gateway_client import GatewayClient
 from server.core.grants import ConsumerPermissionFiles
 from server.core.latchkey_runtime import LatchkeyRuntime
@@ -54,31 +55,50 @@ def health() -> HealthStatus:
     return HealthStatus(status="ok")
 
 
+REAP_INTERVAL_SECONDS = 15.0
+
+
+async def _reap_idle(runtime: LatchkeyRuntime, display: DisplayManager) -> None:
+    while True:
+        await asyncio.sleep(REAP_INTERVAL_SECONDS)
+        try:
+            await runtime.stop_gateway_if_idle()
+            await display.stop_if_idle()
+        except Exception:
+            logger.exception("idle reaper iteration failed")
+
+
 @asynccontextmanager
 async def lifespan(app: Litestar) -> AsyncIterator[None]:
     config = load_config()
     runtime = LatchkeyRuntime(config)
     runtime.prepare()
-    gateway = GatewayClient(config)
+    gateway = GatewayClient(config, runtime)
+    display = DisplayManager(config)
     services = AppServices(
         config=config,
         runtime=runtime,
         gateway=gateway,
         consumer_files=ConsumerPermissionFiles(config, runtime),
-        browser_logins=BrowserLoginManager(gateway),
+        browser_logins=BrowserLoginManager(gateway, display),
+        display=display,
     )
     app.state.services = services
 
-    await runtime.start_gateway()
     # Browser discovery can download things on first boot; don't block startup on it.
     browser_task = asyncio.create_task(runtime.ensure_browser())
+    # The gateway and display stack start on demand and are stopped again once
+    # idle, so a quiet app holds no node/X/browser processes.
+    reaper_task = asyncio.create_task(_reap_idle(runtime, display))
     logger.info("latchkey app ready")
     try:
         yield
     finally:
         browser_task.cancel()
+        reaper_task.cancel()
         await gateway.close()
         await runtime.stop_gateway()
+        await display.stop()
 
 
 def _route_handlers() -> list[object]:

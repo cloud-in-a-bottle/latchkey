@@ -61,7 +61,6 @@ async def list_services(services: AppServices, consumer: ConsumerContext | None)
         return _permission_required_response(
             services, consumer, "listing services requires the metadata grant", grant=_META_GRANT
         )
-    await services.runtime.ensure_gateway_running()
     result = await services.gateway.rpc("services list")
     return Response(ServicesListBody(services=result))
 
@@ -74,7 +73,6 @@ async def service_info(services: AppServices, consumer: ConsumerContext | None, 
         return _permission_required_response(
             services, consumer, "service info requires the metadata grant", grant=_META_GRANT
         )
-    await services.runtime.ensure_gateway_running()
     try:
         # Latchkey RPC passthrough; the shape is latchkey's (see services/latchkey/openapi.yaml).
         result = await services.gateway.rpc("services info", {"serviceName": service_name})
@@ -131,7 +129,6 @@ async def proxy(
     headers = forwardable_request_headers(list(request.headers.items()))
     body = await request.body()
 
-    await services.runtime.ensure_gateway_running()
     upstream = await services.gateway.proxy(request.method, target, headers, body, jwt)
 
     if is_permission_denial(upstream):

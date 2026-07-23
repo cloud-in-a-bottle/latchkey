@@ -8,11 +8,11 @@ proxy so other apps in the compute space can call third-party APIs (Slack, GitHu
 
 The container runs three things:
 
-- **The front server** (litestar) — the owner console, the cross-app service endpoint, and the
-  permission shim between OpenHost grants and latchkey. Web glue lives in `src/server/web/`
-  (routes, request/response models, templates), framework-free logic in `src/server/core/`, unit
-  tests in `src/server/tests/`; `tests/` at the repo root holds the containerized integration
-  tests.
+- **The front server** (litestar, single process) — the owner console, the cross-app service
+  endpoint, and the permission shim between OpenHost grants and latchkey. Web glue lives in
+  `src/server/web/` (routes, request/response models, templates), framework-free logic in
+  `src/server/core/`, unit tests in `src/server/tests/`; `tests/` at the repo root holds the
+  containerized integration tests.
 - **`latchkey gateway`** on localhost — latchkey's own HTTP server, which injects stored
   credentials into proxied requests and enforces per-request permission policies via
   [detent](https://github.com/imbue-ai/detent). Only the front server can reach it (localhost +
@@ -20,6 +20,12 @@ The container runs three things:
 - **A virtual display** (Xvfb + x11vnc) — for latchkey's interactive `auth browser` logins. The
   owner sees Chromium through noVNC on an owner-gated page, logs in to the third-party service,
   and latchkey extracts the API credentials from the browser session.
+
+Only the front server runs all the time. The gateway and the display stack start on demand — the
+gateway on the first request that needs it, the display when a browser login or VNC viewer
+connects — and a reaper stops them again after an idle period, so an idle app holds just the one
+Python process. Idle windows: `LATCHKEY_GATEWAY_IDLE_SECONDS` (default 300) and
+`LATCHKEY_DISPLAY_IDLE_SECONDS` (default 60); `<= 0` disables the idle stop.
 
 Request path for consumers:
 

@@ -25,6 +25,11 @@ class AppConfig:
     gateway_password: str
     vnc_host: str
     vnc_port: int
+    display: str
+    screen_geometry: str
+    # Idle seconds before the reaper stops the gateway / display stack; <= 0 keeps them running.
+    gateway_idle_seconds: float
+    display_idle_seconds: float
 
     @property
     def own_url(self) -> str:
@@ -59,6 +64,11 @@ def load_config() -> AppConfig:
         gateway_password=secrets.token_urlsafe(32),
         vnc_host="127.0.0.1",
         vnc_port=int(os.environ.get("LATCHKEY_VNC_PORT", "5900")),
+        display=os.environ.get("DISPLAY", ":99"),
+        # 8:5, matching #vnc-screen's aspect-ratio.
+        screen_geometry=os.environ.get("LATCHKEY_SCREEN_GEOMETRY", "1600x1000x24"),
+        gateway_idle_seconds=float(os.environ.get("LATCHKEY_GATEWAY_IDLE_SECONDS", "300")),
+        display_idle_seconds=float(os.environ.get("LATCHKEY_DISPLAY_IDLE_SECONDS", "60")),
     )
 
 

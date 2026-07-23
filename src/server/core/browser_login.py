@@ -5,6 +5,7 @@ from enum import StrEnum
 import attr
 from loguru import logger
 
+from server.core.display import DisplayManager
 from server.core.gateway_client import BROWSER_LOGIN_TIMEOUT_SECONDS
 from server.core.gateway_client import GatewayClient
 from server.core.gateway_client import GatewayRpcError
@@ -38,8 +39,9 @@ class BrowserLoginManager:
     alreadyPrepared for services that don't need it) and then `auth browser`.
     """
 
-    def __init__(self, gateway: GatewayClient) -> None:
+    def __init__(self, gateway: GatewayClient, display: DisplayManager) -> None:
         self._gateway = gateway
+        self._display = display
         self._job: LoginJob | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -61,17 +63,20 @@ class BrowserLoginManager:
 
     async def _run(self, job: LoginJob) -> None:
         try:
-            await self._gateway.rpc(
-                "auth browser-prepare",
-                {"serviceName": job.service_name},
-                timeout=BROWSER_LOGIN_TIMEOUT_SECONDS,
-            )
-            self._job = attr.evolve(job, state=LoginState.RUNNING)
-            await self._gateway.rpc(
-                "auth browser",
-                {"serviceName": job.service_name},
-                timeout=BROWSER_LOGIN_TIMEOUT_SECONDS,
-            )
+            # The login browser renders onto the on-demand display stack; hold it
+            # up for the whole flow.
+            async with self._display.use():
+                await self._gateway.rpc(
+                    "auth browser-prepare",
+                    {"serviceName": job.service_name},
+                    timeout=BROWSER_LOGIN_TIMEOUT_SECONDS,
+                )
+                self._job = attr.evolve(job, state=LoginState.RUNNING)
+                await self._gateway.rpc(
+                    "auth browser",
+                    {"serviceName": job.service_name},
+                    timeout=BROWSER_LOGIN_TIMEOUT_SECONDS,
+                )
         except GatewayRpcError as e:
             logger.warning("browser login for {} failed: {}", job.service_name, e.message)
             self._job = attr.evolve(job, state=LoginState.FAILED, error=e.message)
