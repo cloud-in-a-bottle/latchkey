@@ -8,6 +8,7 @@ from litestar import route
 from loguru import logger
 
 from server.core.gateway_client import GatewayRpcError
+from server.core.gateway_client import ambiguous_account
 from server.core.gateway_client import is_permission_denial
 from server.core.grants import META_SCOPE
 from server.core.grants import PERMISSION_SERVICES_READ
@@ -16,10 +17,13 @@ from server.core.grants import ScopeGrant
 from server.core.grants import build_grant_url
 from server.core.grants import detent_grants
 from server.core.grants import has_meta_permission
+from server.core.proxying import ACCOUNT_HEADER
 from server.core.proxying import PROXY_PATH_PREFIX
 from server.core.proxying import extract_proxy_target
 from server.core.proxying import forwardable_request_headers
 from server.core.proxying import forwardable_response_headers
+from server.core.proxying import requested_account
+from server.web.api_models import AccountRequiredBody
 from server.web.api_models import ErrorBody
 from server.web.api_models import GrantUrlBody
 from server.web.api_models import PermissionRequiredBody
@@ -126,10 +130,27 @@ async def proxy(
         )
 
     jwt = await services.consumer_files.jwt_for(consumer.app_id, consumer.grants)
-    headers = forwardable_request_headers(list(request.headers.items()))
+    request_headers = list(request.headers.items())
+    headers = forwardable_request_headers(request_headers)
     body = await request.body()
 
-    upstream = await services.gateway.proxy(request.method, target, headers, body, jwt)
+    upstream = await services.gateway.proxy(
+        request.method, target, headers, body, jwt, account=requested_account(request_headers)
+    )
+
+    ambiguous = ambiguous_account(upstream)
+    if ambiguous is not None:
+        return Response(
+            AccountRequiredBody(
+                service=ambiguous.service,
+                accounts=list(ambiguous.accounts),
+                message=(
+                    f"the owner has several '{ambiguous.service}' accounts; "
+                    f"name the one to use in the {ACCOUNT_HEADER} header"
+                ),
+            ),
+            status_code=400,
+        )
 
     if is_permission_denial(upstream):
         logger.info("denied {} {} for consumer {}", request.method, target, consumer.app_name)

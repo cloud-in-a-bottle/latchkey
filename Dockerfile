@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-ARG LATCHKEY_VERSION=2.21.0
+ARG LATCHKEY_VERSION=3.1.0
 RUN npm install -g latchkey@${LATCHKEY_VERSION}
 
 # noVNC client (static files served by the app on the browser-login page).

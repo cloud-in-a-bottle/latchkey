@@ -1,6 +1,7 @@
 from server.core.proxying import extract_proxy_target
 from server.core.proxying import forwardable_request_headers
 from server.core.proxying import forwardable_response_headers
+from server.core.proxying import requested_account
 
 
 def test_extract_proxy_target_plain() -> None:
@@ -40,6 +41,24 @@ def test_request_headers_strip_credentials_and_router_headers() -> None:
         ("Content-Type", "application/json"),
         ("X-Custom", "kept"),
     ]
+
+
+def test_request_headers_strip_account_and_gateway_control_headers() -> None:
+    """The account choice is consumed here, and only this app may speak the gateway's own headers."""
+    headers = [
+        ("X-Latchkey-Account", "bob@example.com"),
+        ("X-Latchkey-Gateway-Permissions-Override", "forged.jwt.here"),
+        ("X-Latchkey-Gateway-Password", "guess"),
+        ("X-Custom", "kept"),
+    ]
+    assert forwardable_request_headers(headers) == [("X-Custom", "kept")]
+
+
+def test_requested_account() -> None:
+    assert requested_account([("x-latchkey-account", "bob@example.com")]) == "bob@example.com"
+    # The default account is a real choice; an absent header is not.
+    assert requested_account([("X-Latchkey-Account", "")]) == ""
+    assert requested_account([("X-Custom", "v")]) is None
 
 
 def test_response_headers_strip_framing() -> None:

@@ -17,6 +17,15 @@ CLI_TIMEOUT_SECONDS = 60.0
 GATEWAY_START_TIMEOUT_SECONDS = 20.0
 
 
+def account_option(account: str | None) -> tuple[str, ...]:
+    """CLI arguments selecting an account: a global latchkey option, so it must precede the subcommand.
+
+    `None` means "don't pass one" (latchkey then resolves the single stored account, or fails if a
+    service has several); the empty string is latchkey's unnamed default account.
+    """
+    return () if account is None else ("--account", account)
+
+
 class LatchkeyCliError(Exception):
     def __init__(self, args_: tuple[str, ...], returncode: int, stdout: str, stderr: str) -> None:
         super().__init__(
@@ -78,6 +87,7 @@ class LatchkeyRuntime:
                 "LATCHKEY_DIRECTORY": str(self._config.latchkey_home),
                 "LATCHKEY_ENCRYPTION_KEY": self._encryption_key,
                 "LATCHKEY_DISABLE_COUNTING": "1",
+                "LATCHKEY_EPHEMERAL_BROWSER": "1" if self._config.ephemeral_browser else "",
             }
         )
         # Never inherit client-gateway mode: all our CLI calls are local operations.

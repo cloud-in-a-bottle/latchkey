@@ -51,6 +51,7 @@ class Handler(BaseHTTPRequestHandler):
             headers={
                 "Authorization": "Bearer " + os.environ["OPENHOST_APP_TOKEN"],
                 "Content-Type": "application/json",
+                **body.get("headers", {}),
             },
         )
         try:
@@ -119,10 +120,17 @@ def call_service(
     path: str,
     method: str = "GET",
     payload: Any = None,
+    headers: dict[str, str] | None = None,
 ) -> tuple[int, Any]:
     response = session.post(
         f"{consumer_url}/call-service",
-        json={"shortname": shortname, "path": path, "method": method, "payload": payload},
+        json={
+            "shortname": shortname,
+            "path": path,
+            "method": method,
+            "payload": payload,
+            "headers": headers or {},
+        },
         timeout=90,
     )
     assert response.status_code == 200, f"consumer /call-service failed: {response.status_code}: {response.text[:300]}"

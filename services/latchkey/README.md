@@ -1,6 +1,6 @@
 # Latchkey service spec
 
-Service URL: `github.com/imbue-openhost/openhost-latchkey/services/latchkey` — version `0.1.0`
+Service URL: `github.com/imbue-openhost/openhost-latchkey/services/latchkey` — version `0.2.0`
 
 The formal API spec lives in [openapi.yaml](openapi.yaml); this file covers the grant semantics
 and typical consumer flow.
@@ -61,11 +61,18 @@ POST proxy/https://api.github.com/repos/owner/repo/issues
 Method, headers, query string, and body are forwarded (hop-by-hop headers, `Authorization`, and
 `Cookie` are stripped). The upstream response is returned as-is.
 
+Request headers read by this service:
+
+- `X-Latchkey-Account` — which of the owner's accounts for the target service to use (see
+  [Multiple accounts](#multiple-accounts)). Omit it when the owner has only one.
+
 Error responses (all JSON):
 
 - `403 {"error": "permission_required", "message": ..., "grant_url": ..., "required_grant"?: ...}` —
   the consumer has no grant covering this request. Redirect the owner to `grant_url` (append or
   pass `return_to` when requesting the grant to get the owner sent back).
+- `400 {"error": "account_required", "message": ..., "service": ..., "accounts": [...]}` — the owner
+  has several accounts for the service; retry with `X-Latchkey-Account` set to one of `accounts`.
 - `400 {"error": ...}` from the gateway — e.g. no credentials stored for the target service, or the
   URL doesn't belong to any known service. The message says which.
 - Upstream errors (including upstream 403s) pass through with the upstream's own body.
@@ -75,9 +82,32 @@ Error responses (all JSON):
 Requires the `latchkey-meta` / `services-read` grant.
 
 - `services` → `{"services": ["slack", "github", ...]}`
-- `services/<name>` → latchkey's service info, including `credentialStatus`
-  (`missing` / `valid` / `invalid` / `unknown`), `baseApiUrls`, and `authOptions`. Use this to
-  decide whether to prompt the owner to connect a service before calling it.
+- `services/<name>` → latchkey's service info, including `credentials`, `baseApiUrls`, and
+  `authOptions`. Use this to decide whether to prompt the owner to connect a service before calling
+  it, and to discover which accounts they connected.
+
+## Multiple accounts
+
+The owner can connect several accounts of the same service (two Slack workspaces, a work and a
+personal Gmail, ...). `services/<name>` reports them in `credentials`, keyed by account — an
+identifier for the third-party login, usually an e-mail. The empty-string key is the default
+account: credentials stored before latchkey knew the account, or for services that can't report one.
+
+```json
+{
+  "credentials": {
+    "bob@example.com": {"credentialType": "GoogleCredentials", "credentialStatus": "valid"},
+    "bob@work.example": {"credentialType": "GoogleCredentials", "credentialStatus": "invalid"}
+  }
+}
+```
+
+An empty `credentials` object means the service isn't connected. With exactly one account, proxy
+calls need no header. With several, name one in `X-Latchkey-Account` on each proxy call; otherwise
+the call fails with `account_required`.
+
+Accounts are not a permission boundary: a grant covers every account of the services its scope
+matches. Which account a call uses is the consumer's choice, not an extra permission.
 
 ### `POST grants/request`
 
@@ -95,14 +125,16 @@ grant in the router on approval, and redirects back to `return_to`.
    [[services.v2.consumes]]
    service = "github.com/imbue-openhost/openhost-latchkey/services/latchkey"
    shortname = "latchkey"
-   version = ">=0.1.0"
+   version = ">=0.2.0"
    grants = [
        {scope = "latchkey-meta", permissions = ["services-read"]},
        {scope = "slack-api", permissions = ["slack-read-all"]},
    ]
    ```
 
-2. Check `GET services/slack` → if `credentialStatus` is `missing`, tell the owner to connect
-   Slack in the latchkey console.
-3. Call `proxy/https://slack.com/api/...`.
-4. On `permission_required`, send the owner to `grant_url` and retry after they approve.
+2. Check `GET services/slack` → if `credentials` is empty, tell the owner to connect Slack in the
+   latchkey console. With more than one account, let the user pick which one to act as.
+3. Call `proxy/https://slack.com/api/...`, with `X-Latchkey-Account` when a specific account is
+   wanted.
+4. On `permission_required`, send the owner to `grant_url` and retry after they approve. On
+   `account_required`, retry with one of the listed accounts.
