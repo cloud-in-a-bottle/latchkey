@@ -8,11 +8,14 @@ from litestar import get
 from litestar import post
 from loguru import logger
 
+from server.core.accounts import ServiceAccounts
+from server.core.accounts import parse_auth_list
 from server.core.browser_login import LOGIN_MAX_SECONDS
 from server.core.browser_login import LoginAlreadyRunningError
 from server.core.browser_login import LoginJob
 from server.core.gateway_client import GatewayRpcError
 from server.core.latchkey_runtime import LatchkeyCliError
+from server.core.latchkey_runtime import account_option
 from server.core.router_client import GrantCreationError
 from server.core.router_client import grant_app_scoped
 from server.web.api_models import ApproveGrantRequest
@@ -35,7 +38,11 @@ def _login_status(login: LoginJob | None, viewer_connected: bool = False) -> Bro
     if login is None:
         return BrowserLoginStatusBody(state="idle", viewer_connected=viewer_connected)
     return BrowserLoginStatusBody(
-        state=login.state.value, service=login.service_name, error=login.error, viewer_connected=viewer_connected
+        state=login.state.value,
+        service=login.service_name,
+        error=login.error,
+        viewer_connected=viewer_connected,
+        logged_in_account=login.logged_in_account,
     )
 
 
@@ -48,11 +55,11 @@ def _login_busy_message(service_name: str, login: LoginJob | None) -> str:
 
 @get("/owner/api/status")
 async def status(services: AppServices) -> StatusBody:
-    auth: dict[str, Any] | None = None
+    connected: list[ServiceAccounts] | None = None
     service_names: list[str] | None = None
     try:
         # Starts the idle-stopped gateway on demand.
-        auth = await services.gateway.rpc("auth list")
+        connected = list(parse_auth_list(await services.gateway.rpc("auth list")))
         service_names = await services.gateway.rpc("services list")
         gateway_healthy = True
     except Exception as e:
@@ -61,7 +68,7 @@ async def status(services: AppServices) -> StatusBody:
     login = services.browser_logins.current
     return StatusBody(
         gateway_healthy=gateway_healthy,
-        auth=auth,
+        connected=connected,
         services=service_names,
         browser_login=_login_status(login, viewer_connected=services.display.viewer_connected)
         if login is not None
@@ -71,8 +78,9 @@ async def status(services: AppServices) -> StatusBody:
 
 @post("/owner/api/auth/set", status_code=200)
 async def auth_set(services: AppServices, data: AuthSetRequest) -> Response[OkBody] | Response[ErrorBody]:
+    args = (*account_option(data.account), "auth", "set", data.service_name, *shlex.split(data.curl_args))
     try:
-        await services.runtime.run_cli("auth", "set", data.service_name, *shlex.split(data.curl_args))
+        await services.runtime.run_cli(*args)
     except LatchkeyCliError as e:
         return _cli_error(e)
     return Response(OkBody())
@@ -80,9 +88,14 @@ async def auth_set(services: AppServices, data: AuthSetRequest) -> Response[OkBo
 
 @post("/owner/api/auth/clear", status_code=200)
 async def auth_clear(services: AppServices, data: AuthClearRequest) -> Response[OkBody] | Response[ErrorBody]:
-    args = ["auth", "clear"]
-    if data.service_name is not None:
-        args.append(data.service_name)
+    args: tuple[str, ...]
+    if data.service_name is None:
+        # Clearing everything: `-y` because there is no terminal to confirm at.
+        args = ("auth", "clear", "-y")
+    elif data.all_accounts:
+        args = ("auth", "clear", data.service_name, "--all")
+    else:
+        args = (*account_option(data.account), "auth", "clear", data.service_name)
     try:
         await services.runtime.run_cli(*args)
     except LatchkeyCliError as e:
@@ -112,7 +125,7 @@ async def browser_login_start(
     services: AppServices, data: BrowserLoginStartRequest
 ) -> Response[BrowserLoginStatusBody] | Response[ErrorBody]:
     try:
-        job = services.browser_logins.start(data.service_name)
+        job = services.browser_logins.start(data.service_name, reuse_account=data.reuse_account)
     except LoginAlreadyRunningError as e:
         return Response(
             ErrorBody(

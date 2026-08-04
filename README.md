@@ -39,6 +39,7 @@ Request path for consumers:
 consumer app ──router service proxy──> front server /api/proxy/<url>
     · translates the consumer's OpenHost grants into a per-consumer detent permissions.json
     · attaches a signed permissions-override JWT (minted via `latchkey gateway create-jwt`)
+    · passes on the consumer's account choice (X-Latchkey-Account), if any
     ──> latchkey gateway /gateway/<url>  ──creds injected──> third-party API
 ```
 
@@ -46,12 +47,30 @@ Consumers get exactly the access the owner granted (detent scope + permission sc
 credentials live only in this app, encrypted at rest (`LATCHKEY_ENCRYPTION_KEY` generated on first
 boot into app data).
 
+## Multiple accounts
+
+Latchkey stores credentials per service *and* per account (usually an e-mail; the empty string is
+its unnamed default, used when a service can't report one). So the owner can connect two Slack
+workspaces or a work and a personal Gmail, and each proxy call picks one via the
+`X-Latchkey-Account` header — with several accounts stored and no header, the call is refused with
+`account_required` listing the choices. Accounts are not a permission boundary: a grant covers every
+account of the services its scope matches.
+
+Browser logins run with `LATCHKEY_EPHEMERAL_BROWSER` on (set it to the empty string to disable), so
+each login starts from a clean browser session instead of resuming as the account that logged in
+last. Services whose login needs a one-time setup first (Google creates an OAuth client) are
+prepared on demand: a login is attempted, and only when latchkey says the setup is missing does the
+app run `auth browser-prepare` and retry. Because latchkey re-runs that setup whenever asked, the
+connect page instead offers reusing an already-connected account's setup when adding another
+account.
+
 See [services/latchkey/](services/latchkey/) for the service spec (openapi.yaml + grant semantics).
 
 ## Owner console
 
-- `/` — connect/disconnect services, register custom services.
-- `/connect/<service>` — browser login (streamed via noVNC) or manual credential entry.
+- `/` — connect/disconnect accounts, register custom services.
+- `/connect/<service>` — the service's connected accounts, plus browser login (streamed via noVNC)
+  or manual credential entry to add another.
 - `/grant` — consent page consumers send the owner to for app-scoped grants.
 
 ## Development
@@ -78,6 +97,8 @@ for browser tests); `stack.app_url` hits the container directly. See `tests/` fo
 - latchkey is consumed as a pinned npm package (`LATCHKEY_VERSION` in the Dockerfile). If we need
   patches, point `npm install` at a fork/branch and PR the change upstream (imbue-ai/latchkey).
 - Upstream wishlist: structured error codes on gateway responses (we currently detect permission
-  denials by the fixed error string), a flag to disable `auth browser` on the gateway RPC,
-  progress reporting for browser-login flows, and a `LATCHKEY_GATEWAY_EXTRA_HEADERS` client option
-  so stock latchkey CLIs inside consumer apps can talk through the router.
+  denials, ambiguous accounts, and "preparation required" by their fixed error strings), a flag to
+  disable `auth browser` on the gateway RPC, progress reporting for browser-login flows, a way to
+  ask whether a service has a stored preparation (so a login needing one can be spotted without
+  provoking the error), and a `LATCHKEY_GATEWAY_EXTRA_HEADERS` client option so stock latchkey CLIs
+  inside consumer apps can talk through the router.

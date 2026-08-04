@@ -32,6 +32,9 @@ class AppConfig:
     display_idle_seconds: float
     # Hard cap on one VNC viewer connection, so a stuck client can't hold the display stack forever.
     vnc_max_session_seconds: float
+    # Browser logins run incognito-style, so logging in a second account for a service isn't
+    # short-circuited by the first account's still-signed-in session.
+    ephemeral_browser: bool
 
     @property
     def own_url(self) -> str:
@@ -72,6 +75,8 @@ def load_config() -> AppConfig:
         gateway_idle_seconds=float(os.environ.get("LATCHKEY_GATEWAY_IDLE_SECONDS", "300")),
         display_idle_seconds=float(os.environ.get("LATCHKEY_DISPLAY_IDLE_SECONDS", "60")),
         vnc_max_session_seconds=float(os.environ.get("LATCHKEY_VNC_MAX_SESSION_SECONDS", "1800")),
+        # Latchkey's own convention for its boolean env vars: non-empty is true.
+        ephemeral_browser=os.environ.get("LATCHKEY_EPHEMERAL_BROWSER", "1") != "",
     )
 
 

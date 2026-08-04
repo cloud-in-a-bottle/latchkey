@@ -14,6 +14,9 @@ from server.core.gateway_client import GatewayClient
 from server.core.gateway_client import GatewayRpcError
 from server.core.latchkey_runtime import LatchkeyRuntime
 
+# What latchkey answers `auth browser` with for a service whose login needs a one-time setup first.
+PREPARATION_REQUIRED = "Service google-gmail requires preparation first. Run 'latchkey auth browser-prepare ...'"
+
 
 def _config() -> AppConfig:
     return AppConfig(
@@ -32,19 +35,30 @@ def _config() -> AppConfig:
         gateway_idle_seconds=300,
         display_idle_seconds=60,
         vnc_max_session_seconds=1800,
+        ephemeral_browser=True,
     )
 
 
 class FakeGateway(GatewayClient):
-    def __init__(self, fail_on: str | None = None) -> None:
+    """Gateway RPC stub: records calls and fails the commands in `failures` with the given message."""
+
+    def __init__(self, failures: dict[str, str] | None = None, fail_first_only: bool = False) -> None:
         super().__init__(_config(), LatchkeyRuntime(_config()))
-        self.fail_on = fail_on
-        self.calls: list[str] = []
+        self.failures = failures or {}
+        self.fail_first_only = fail_first_only
+        self.calls: list[tuple[str, dict[str, Any] | None]] = []
+
+    @property
+    def commands(self) -> list[str]:
+        return [command for command, _ in self.calls]
 
     async def rpc(self, command: str, params: dict[str, Any] | None = None, timeout: float = 0) -> Any:
-        self.calls.append(command)
-        if command == self.fail_on:
-            raise GatewayRpcError(400, f"{command} failed")
+        self.calls.append((command, params))
+        message = self.failures.get(command)
+        if message is not None and not (self.fail_first_only and self.commands.count(command) > 1):
+            raise GatewayRpcError(400, message)
+        if command == "auth browser":
+            return {"account": "bob@example.com"}
         return None
 
 
@@ -71,19 +85,45 @@ class FakeDisplay(DisplayManager):
         self._up = False
 
 
-def test_login_runs_prepare_then_browser() -> None:
+def test_login_skips_prepare_when_not_needed() -> None:
     async def scenario() -> None:
         gateway = FakeGateway()
         display = FakeDisplay()
         manager = BrowserLoginManager(gateway, display)
-        job = manager.start("google-gmail")
-        assert job.state == LoginState.PREPARING
+        job = manager.start("slack")
+        assert job.state == LoginState.RUNNING
         await manager.wait_until_done()
-        assert gateway.calls == ["auth browser-prepare", "auth browser"]
-        assert manager.current is not None and manager.current.state == LoginState.SUCCEEDED
+        assert gateway.calls == [("auth browser", {"serviceName": "slack"})]
+        current = manager.current
+        assert current is not None and current.state == LoginState.SUCCEEDED
+        assert current.logged_in_account == "bob@example.com"
         # The login started the display stack and released it when done.
         assert display.starts == 1
         assert display._active_uses == 0
+
+    asyncio.run(scenario())
+
+
+def test_login_prepares_only_when_latchkey_asks() -> None:
+    async def scenario() -> None:
+        gateway = FakeGateway({"auth browser": PREPARATION_REQUIRED}, fail_first_only=True)
+        manager = BrowserLoginManager(gateway, FakeDisplay())
+        manager.start("google-gmail")
+        await manager.wait_until_done()
+        assert gateway.commands == ["auth browser", "auth browser-prepare", "auth browser"]
+        current = manager.current
+        assert current is not None and current.state == LoginState.SUCCEEDED
+
+    asyncio.run(scenario())
+
+
+def test_reuse_account_is_passed_to_latchkey() -> None:
+    async def scenario() -> None:
+        gateway = FakeGateway()
+        manager = BrowserLoginManager(gateway, FakeDisplay())
+        manager.start("google-gmail", reuse_account="alice@example.com")
+        await manager.wait_until_done()
+        assert gateway.calls == [("auth browser", {"serviceName": "google-gmail", "account": "alice@example.com"})]
 
     asyncio.run(scenario())
 
@@ -123,26 +163,27 @@ def test_display_stops_when_idle_but_not_during_login() -> None:
     asyncio.run(scenario())
 
 
-def test_prepare_failure_skips_login() -> None:
+def test_prepare_failure_skips_the_retry() -> None:
     async def scenario() -> None:
-        gateway = FakeGateway(fail_on="auth browser-prepare")
+        gateway = FakeGateway({"auth browser": PREPARATION_REQUIRED, "auth browser-prepare": "setup exploded"})
         manager = BrowserLoginManager(gateway, FakeDisplay())
         manager.start("google-gmail")
         await manager.wait_until_done()
-        assert gateway.calls == ["auth browser-prepare"]
+        assert gateway.commands == ["auth browser", "auth browser-prepare"]
         current = manager.current
         assert current is not None and current.state == LoginState.FAILED
-        assert current.error == "auth browser-prepare failed"
+        assert current.error == "setup exploded"
 
     asyncio.run(scenario())
 
 
-def test_login_failure_reported() -> None:
+def test_login_failure_reported_without_preparing() -> None:
     async def scenario() -> None:
-        gateway = FakeGateway(fail_on="auth browser")
+        gateway = FakeGateway({"auth browser": "Error: login cancelled"})
         manager = BrowserLoginManager(gateway, FakeDisplay())
         manager.start("slack")
         await manager.wait_until_done()
+        assert gateway.commands == ["auth browser"]
         current = manager.current
         assert current is not None and current.state == LoginState.FAILED
 
@@ -160,6 +201,6 @@ def test_second_start_rejected_while_active() -> None:
         # After completion a new login may start.
         manager.start("github")
         await manager.wait_until_done()
-        assert gateway.calls.count("auth browser") == 2
+        assert gateway.commands.count("auth browser") == 2
 
     asyncio.run(scenario())

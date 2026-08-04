@@ -29,7 +29,13 @@ info:
     each other. Keep custom scope schemas disjoint (e.g. match domain *and* path prefix), or
     reuse one scope name per service. See README.md for the full grant semantics and typical
     consumer flow.
-  version: 0.1.0
+
+    **Multiple accounts:** the owner may connect several accounts of one service. They are keyed by
+    account (usually an e-mail; the empty string is the default account) in `credentials` on
+    `services/{serviceName}`, and picked per proxy call with the `X-Latchkey-Account` header.
+    Accounts are not a permission boundary — a grant covers every account of the services its scope
+    matches.
+  version: 0.2.0
 
 paths:
   /proxy/{targetUrl}:
@@ -42,24 +48,36 @@ paths:
         description: |
           Absolute http(s) URL of the third-party endpoint, appended verbatim (including any
           query string), e.g. `proxy/https://slack.com/api/conversations.list`.
+      - name: X-Latchkey-Account
+        in: header
+        required: false
+        schema:
+          type: string
+        description: |
+          Which of the owner's accounts for the target service to inject credentials from, as
+          listed by `services/{serviceName}`. Required only when the owner connected more than
+          one; the empty string selects the default account.
     get:
       summary: Proxy a request with credentials injected
       description: |
         Any HTTP method is supported (GET shown as representative). Method, headers, query
-        string, and body are forwarded; hop-by-hop headers, `Authorization`, and `Cookie` are
-        stripped before the upstream call. The upstream response (including upstream errors) is
-        returned as-is.
+        string, and body are forwarded; hop-by-hop headers, `Authorization`, `Cookie`, and this
+        service's own `X-Latchkey-*` headers are stripped before the upstream call. The upstream
+        response (including upstream errors) is returned as-is.
       responses:
         "200":
           description: Upstream response, passed through.
         "400":
           description: |
-            Gateway error — e.g. the URL matches no known service, or the owner has not stored
-            credentials for it. The `error` message says which.
+            `account_required` when the owner has several accounts for the service and none was
+            named; otherwise a gateway error — e.g. the URL matches no known service, or the
+            owner has not stored credentials for it. The `error` message says which.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Error"
+                oneOf:
+                  - $ref: "#/components/schemas/AccountRequired"
+                  - $ref: "#/components/schemas/Error"
         "403":
           description: No grant covers this request.
           content:
@@ -100,10 +118,11 @@ paths:
         schema:
           type: string
     get:
-      summary: Get service info and credential status
+      summary: Get service info and connected accounts
       description: |
-        Requires the `latchkey-meta` / `services-read` grant. Use `credentialStatus` to decide
-        whether to prompt the owner to connect the service before calling it.
+        Requires the `latchkey-meta` / `services-read` grant. An empty `credentials` object means
+        the owner has not connected the service; its keys are the accounts that can be named in
+        `X-Latchkey-Account` on proxy calls.
       responses:
         "200":
           description: Latchkey's service info.
@@ -124,9 +143,20 @@ paths:
                     items:
                       type: string
                     example: ["browser", "set"]
-                  credentialStatus:
-                    type: string
-                    enum: [missing, valid, invalid, unknown]
+                  credentials:
+                    type: object
+                    description: |
+                      Stored credentials keyed by account (the empty string is the default
+                      account). Empty when the service is not connected.
+                    additionalProperties:
+                      type: object
+                      properties:
+                        credentialType:
+                          type: string
+                          example: SlackCredentials
+                        credentialStatus:
+                          type: string
+                          enum: [valid, invalid, unknown]
         "403":
           description: Missing the metadata grant.
           content:
@@ -195,6 +225,22 @@ components:
       properties:
         error:
           type: string
+    AccountRequired:
+      type: object
+      required: [error, message, service, accounts]
+      properties:
+        error:
+          type: string
+          enum: [account_required]
+        message:
+          type: string
+        service:
+          type: string
+        accounts:
+          type: array
+          items:
+            type: string
+          description: Accounts to choose from in the `X-Latchkey-Account` header.
     PermissionRequired:
       type: object
       required: [error, message, grant_url]

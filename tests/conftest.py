@@ -59,9 +59,7 @@ class EchoHandler(BaseHTTPRequestHandler):
         self._respond()
 
 
-@pytest.fixture(scope="session")
-def echo_server() -> Iterator[str]:
-    """A fake third-party API on the host, reachable from app containers; yields its base URL."""
+def _run_echo_server() -> Iterator[str]:
     with socket.socket() as probe:
         probe.bind(("", 0))
         port = probe.getsockname()[1]
@@ -72,6 +70,18 @@ def echo_server() -> Iterator[str]:
     server.shutdown()
 
 
+@pytest.fixture(scope="session")
+def echo_server() -> Iterator[str]:
+    """A fake third-party API on the host, reachable from app containers; yields its base URL."""
+    yield from _run_echo_server()
+
+
+@pytest.fixture(scope="session")
+def multi_account_echo_server() -> Iterator[str]:
+    """A second echo server, on its own host:port so it registers as a service of its own."""
+    yield from _run_echo_server()
+
+
 class DeployedConsumer:
     def __init__(self, stack: OpenhostStack, name: str, app_id: str, shortname: str) -> None:
         self.stack = stack
@@ -79,9 +89,15 @@ class DeployedConsumer:
         self.app_id = app_id
         self.shortname = shortname
 
-    def call(self, path: str, method: str = "GET", payload: Any = None) -> tuple[int, Any]:
+    def call(
+        self,
+        path: str,
+        method: str = "GET",
+        payload: Any = None,
+        headers: dict[str, str] | None = None,
+    ) -> tuple[int, Any]:
         return call_service(
-            self.stack.owner_session, self.stack.url_for(self.name), self.shortname, path, method, payload
+            self.stack.owner_session, self.stack.url_for(self.name), self.shortname, path, method, payload, headers
         )
 
 
@@ -102,3 +118,10 @@ def consumer(stack: OpenhostStack) -> DeployedConsumer:
 def bare_consumer(stack: OpenhostStack) -> DeployedConsumer:
     """A consumer that never receives any grants."""
     return _deploy_consumer(stack, "lk-bare")
+
+
+@pytest.fixture(scope="session")
+def multi_account_consumer(stack: OpenhostStack) -> DeployedConsumer:
+    """A consumer of its own for the multi-account test: grants outlive a test, and tests that
+    assert a consumer *lacks* a grant must not depend on which one ran first."""
+    return _deploy_consumer(stack, "lk-multi")

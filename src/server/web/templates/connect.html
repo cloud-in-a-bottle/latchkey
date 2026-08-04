@@ -3,12 +3,19 @@
 {% block content %}
 <h1>Connect {{ service_name }}</h1>
 <p id="cred-status" class="muted"></p>
+<table id="accounts" style="display:none"><tbody></tbody></table>
 <div class="card" id="browser-card" style="display:none">
   <h2 style="margin-top:0">Browser login</h2>
   <p class="muted">A browser opens below. Log in to {{ service_name }} as usual — latchkey watches the
-  session, extracts API credentials once you're logged in, and closes the browser. Credentials are
-  stored encrypted inside this app and are never shown to other apps. Pasting with
-  <code>Ctrl/Cmd+V</code> works directly in the remote browser.</p>
+  session, extracts API credentials once you're logged in, and closes the browser. Each login starts
+  from a clean browser session, so logging in as another user adds a second account rather than
+  replacing the first. Credentials are stored encrypted inside this app and are never shown to other
+  apps. Pasting with <code>Ctrl/Cmd+V</code> works directly in the remote browser.</p>
+  <p class="muted" id="reuse-row" style="display:none">Some services need a one-time setup (creating
+  an OAuth client) before the first login. Reuse it from an account you already connected instead of
+  running it again:
+    <label>setup <select id="reuse-account"></select></label>
+  </p>
   <p><button class="primary" id="start">Start login</button>
      <span id="state" class="muted"></span></p>
   <div id="vnc-screen" style="display:none"></div>
@@ -17,6 +24,7 @@
   <h2 style="margin-top:0">Manual credentials</h2>
   <p class="muted" id="set-example">Stored as curl arguments.</p>
   <textarea id="curl-args" rows="2" placeholder='-H "Authorization: Bearer ..."'></textarea>
+  <input id="cred-account" placeholder="account (optional, e.g. bob@example.com)">
   <button class="primary" id="save-creds">Save credentials</button>
   <span id="set-result" class="muted"></span>
 </div>
@@ -132,6 +140,43 @@ document.addEventListener('paste', (e) => {
 // Test hook: lets browser tests exercise the paste plumbing with a stub in place of the RFB.
 window.__vncTest = { setRfb: (value) => { rfb = value; }, getRfb: () => rfb };
 
+// The empty account is latchkey's unnamed default: credentials stored before the account was
+// known, or for services that can't report one.
+function accountLabel(account) {
+  return account === '' ? 'default account' : account;
+}
+
+// info.credentials: {account: {credentialType, credentialStatus}}, empty when nothing is stored.
+function renderAccounts(credentials) {
+  const accounts = Object.keys(credentials);
+  document.getElementById('cred-status').textContent = accounts.length === 0
+    ? 'no credentials stored yet'
+    : `${accounts.length} account${accounts.length === 1 ? '' : 's'} connected`;
+
+  const table = document.getElementById('accounts');
+  const body = table.querySelector('tbody');
+  body.innerHTML = '';
+  table.style.display = accounts.length === 0 ? 'none' : 'table';
+  for (const [account, entry] of Object.entries(credentials)) {
+    const row = body.insertRow();
+    row.insertCell().textContent = accountLabel(account);
+    const status = row.insertCell();
+    status.textContent = entry.credentialStatus;
+    status.className = `status-${entry.credentialStatus}`;
+  }
+
+  const select = document.getElementById('reuse-account');
+  select.innerHTML = '<option value="">run the setup if needed</option>';
+  for (const account of accounts) {
+    const option = document.createElement('option');
+    // Distinguishes "no account picked" from the default account, whose value is the empty string.
+    option.value = `account:${account}`;
+    option.textContent = `reuse from ${accountLabel(account)}`;
+    select.append(option);
+  }
+  document.getElementById('reuse-row').style.display = accounts.length === 0 ? 'none' : 'block';
+}
+
 async function init() {
   const r = await fetch(`/owner/api/service-info/${encodeURIComponent(serviceName)}`);
   if (!r.ok) {
@@ -139,8 +184,7 @@ async function init() {
     return;
   }
   const info = await r.json();
-  document.getElementById('cred-status').textContent =
-    `credentials: ${info.credentialStatus || 'unknown'}`;
+  renderAccounts(info.credentials || {});
   if ((info.authOptions || []).includes('browser')) {
     document.getElementById('browser-card').style.display = 'block';
   }
@@ -156,9 +200,12 @@ async function start() {
   document.getElementById('start').disabled = true;
   loginActive = true;
   vncConnect();
+  const reuse = document.getElementById('reuse-account').value;
+  const payload = {service_name: serviceName};
+  if (reuse !== '') payload.reuse_account = reuse.slice('account:'.length);
   const r = await fetch('/owner/api/browser-login/start', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({service_name: serviceName})});
+    body: JSON.stringify(payload)});
   if (!r.ok) {
     const body = await r.json();
     document.getElementById('state').textContent = body.message || 'failed to start';
@@ -182,7 +229,9 @@ async function poll() {
   } else if (s.state === 'succeeded') {
     clearInterval(polling);
     loginActive = false;
-    document.getElementById('state').textContent = 'connected!';
+    document.getElementById('state').textContent = s.logged_in_account
+      ? `connected as ${s.logged_in_account}!` : 'connected!';
+    document.getElementById('start').disabled = false;
     vncDisconnect();
     init();
   } else if (s.state === 'failed') {
@@ -197,10 +246,13 @@ async function poll() {
 async function setCredentials() {
   const out = document.getElementById('set-result');
   out.textContent = '...';
+  const payload = {service_name: serviceName, curl_args: document.getElementById('curl-args').value};
+  // Left blank: latchkey stores under the single existing account, or the default one when there
+  // is none (and refuses when the service already has several).
+  const account = document.getElementById('cred-account').value;
+  if (account !== '') payload.account = account;
   const r = await fetch('/owner/api/auth/set', {method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({service_name: serviceName,
-                          curl_args: document.getElementById('curl-args').value})});
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)});
   const body = await r.json();
   out.textContent = r.ok ? 'saved' : (body.message || 'failed');
   init();

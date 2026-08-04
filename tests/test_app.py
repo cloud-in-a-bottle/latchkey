@@ -36,6 +36,23 @@ def _echo_grant(echo_server: str, scope: str, path_prefix: str, method: str = "G
     }
 
 
+def _register_service(stack: OpenhostStack, service_name: str, base_api_url: str) -> None:
+    response = stack.owner_session.post(
+        f"{stack.url}/owner/api/services/register",
+        json={"service_name": service_name, "base_api_url": base_api_url},
+        timeout=30,
+    )
+    assert response.status_code in (200, 201), response.text
+
+
+def _set_credentials(stack: OpenhostStack, service_name: str, token: str, account: str | None = None) -> None:
+    payload: dict[str, object] = {"service_name": service_name, "curl_args": f'-H "Authorization: Bearer {token}"'}
+    if account is not None:
+        payload["account"] = account
+    response = stack.owner_session.post(f"{stack.url}/owner/api/auth/set", json=payload, timeout=30)
+    assert response.status_code in (200, 201), response.text
+
+
 def test_health_endpoint(stack: OpenhostStack) -> None:
     response = httpx.get(f"{stack.app_url}/health")
     assert response.status_code == 200
@@ -80,7 +97,8 @@ def test_services_listing_requires_meta_grant(stack: OpenhostStack, consumer: De
 
     status, body = consumer.call("services/slack")
     assert status == 200
-    assert body["credentialStatus"] == "missing"
+    # Credentials are reported per account; nothing is connected yet.
+    assert body["credentials"] == {}
     assert "browser" in body["authOptions"]
 
     status, body = consumer.call("services/no-such-service")
@@ -91,19 +109,8 @@ def test_proxy_injects_credentials_and_enforces_permissions(
     stack: OpenhostStack, consumer: DeployedConsumer, echo_server: str
 ) -> None:
     # Owner registers the echo server as a custom service and stores credentials for it.
-    owner = stack.owner_session
-    response = owner.post(
-        f"{stack.url}/owner/api/services/register",
-        json={"service_name": "echosvc", "base_api_url": f"{echo_server}/api/"},
-        timeout=30,
-    )
-    assert response.status_code in (200, 201), response.text
-    response = owner.post(
-        f"{stack.url}/owner/api/auth/set",
-        json={"service_name": "echosvc", "curl_args": '-H "Authorization: Bearer echo-sekrit"'},
-        timeout=30,
-    )
-    assert response.status_code in (200, 201), response.text
+    _register_service(stack, "echosvc", f"{echo_server}/api/")
+    _set_credentials(stack, "echosvc", "echo-sekrit")
 
     stack.grant(consumer.app_id, SERVICE, _echo_grant(echo_server, "echosvc-alpha", "/api/alpha"))
 
@@ -120,6 +127,77 @@ def test_proxy_injects_credentials_and_enforces_permissions(
     assert body["error"] == "permission_required"
     status, body = consumer.call(f"proxy/{echo_server}/api/other")
     assert status == 403
+
+
+def test_multiple_accounts_per_service(
+    stack: OpenhostStack,
+    multi_account_consumer: DeployedConsumer,
+    multi_account_echo_server: str,
+    page: Page,
+) -> None:
+    """Two accounts of one service: the owner console lists both, and consumers pick one per call."""
+    _register_service(stack, "echomulti", f"{multi_account_echo_server}/api/")
+    _set_credentials(stack, "echomulti", "token-alpha", account="alpha@example.com")
+    _set_credentials(stack, "echomulti", "token-beta", account="beta@example.com")
+
+    response = stack.owner_session.get(f"{stack.url}/owner/api/status", timeout=60)
+    assert response.status_code == 200, response.text
+    connected = {entry["service"]: entry["accounts"] for entry in response.json()["connected"]}
+    assert [a["account"] for a in connected["echomulti"]] == ["alpha@example.com", "beta@example.com"]
+
+    # Both accounts get their own row in the console, and the service's own page lists them too.
+    stack.playwright_login(page)
+    page.goto(stack.url)
+    expect(page.locator("#connected tbody tr").first).to_be_visible(timeout=15000)
+    console_rows = page.locator("#connected").inner_text()
+    assert "alpha@example.com" in console_rows and "beta@example.com" in console_rows
+    page.goto(f"{stack.url}/connect/echomulti")
+    expect(page.locator("#accounts tbody tr")).to_have_count(2, timeout=15000)
+    # Adding another account can reuse an existing one's setup.
+    expect(page.locator("#reuse-account option")).to_have_count(3)
+
+    stack.grant(multi_account_consumer.app_id, SERVICE, META_GRANT)
+    status, body = multi_account_consumer.call("services/echomulti")
+    assert status == 200, body
+    assert sorted(body["credentials"]) == ["alpha@example.com", "beta@example.com"]
+
+    stack.grant(
+        multi_account_consumer.app_id, SERVICE, _echo_grant(multi_account_echo_server, "echomulti-api", "/api/")
+    )
+
+    # Naming an account injects that account's credentials.
+    for account, token in (("alpha@example.com", "token-alpha"), ("beta@example.com", "token-beta")):
+        status, body = multi_account_consumer.call(
+            "proxy/" + multi_account_echo_server + "/api/x", headers={"X-Latchkey-Account": account}
+        )
+        assert status == 200, body
+        assert body["authorization"] == f"Bearer {token}"
+
+    # Naming none is refused — with the choices, rather than latchkey's CLI-flavored error.
+    status, body = multi_account_consumer.call(f"proxy/{multi_account_echo_server}/api/x")
+    assert status == 400, body
+    assert body["error"] == "account_required"
+    assert sorted(body["accounts"]) == ["alpha@example.com", "beta@example.com"]
+
+    # Clearing one account leaves the other usable without naming it.
+    response = stack.owner_session.post(
+        f"{stack.url}/owner/api/auth/clear",
+        json={"service_name": "echomulti", "account": "beta@example.com"},
+        timeout=30,
+    )
+    assert response.status_code in (200, 201), response.text
+    status, body = multi_account_consumer.call(f"proxy/{multi_account_echo_server}/api/x")
+    assert status == 200, body
+    assert body["authorization"] == "Bearer token-alpha"
+
+    # Credentials stored without an account land in latchkey's default account, which consumers
+    # select with an empty header value.
+    _set_credentials(stack, "echomulti", "token-default", account="")
+    status, body = multi_account_consumer.call(
+        f"proxy/{multi_account_echo_server}/api/x", headers={"X-Latchkey-Account": ""}
+    )
+    assert status == 200, body
+    assert body["authorization"] == "Bearer token-default"
 
 
 def test_app_scoped_grant_flow(stack: OpenhostStack, consumer: DeployedConsumer, echo_server: str) -> None:

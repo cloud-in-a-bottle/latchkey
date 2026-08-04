@@ -1,5 +1,7 @@
+import re
 from typing import Any
 
+import attr
 import httpx
 
 from server.core.config import AppConfig
@@ -7,10 +9,21 @@ from server.core.latchkey_runtime import LatchkeyRuntime
 
 PASSWORD_HEADER = "X-Latchkey-Gateway-Password"
 PERMISSIONS_OVERRIDE_HEADER = "X-Latchkey-Gateway-Permissions-Override"
+ACCOUNT_HEADER = "X-Latchkey-Gateway-Account"
+
+# Headers the gateway treats as its own control channel; a proxied request must never carry a
+# consumer's copy of one (see forwardable_request_headers).
+GATEWAY_HEADER_PREFIX = "x-latchkey-gateway-"
 
 # The gateway signals a detent policy denial with this exact JSON error body
 # (upstream 403s arrive with the upstream's own body instead).
 PERMISSION_DENIED_MESSAGE = "Error: Request not permitted by the user."
+
+# Latchkey's AmbiguousAccountError, raised when a service has several stored accounts and the
+# request picked none. Matched by message for want of structured error codes (upstream wishlist).
+_AMBIGUOUS_ACCOUNT_RE = re.compile(
+    r"Multiple accounts are stored for service '(?P<service>[^']*)': (?P<accounts>.*?)\. Specify"
+)
 
 PROXY_TIMEOUT_SECONDS = 120.0
 RPC_TIMEOUT_SECONDS = 60.0
@@ -58,11 +71,19 @@ class GatewayClient:
         headers: list[tuple[str, str]],
         content: bytes,
         permissions_jwt: str,
+        account: str | None = None,
     ) -> httpx.Response:
-        """Forward a request through /gateway/<target_url> with a per-consumer permissions override."""
+        """Forward a request through /gateway/<target_url> with a per-consumer permissions override.
+
+        `account` picks which of the service's stored accounts to inject credentials from; with None
+        the gateway resolves the single stored account, or fails when there are several. The empty
+        string is a choice like any other: latchkey's unnamed default account.
+        """
         request_headers = list(headers)
         request_headers.append((PASSWORD_HEADER, self._config.gateway_password))
         request_headers.append((PERMISSIONS_OVERRIDE_HEADER, permissions_jwt))
+        if account is not None:
+            request_headers.append((ACCOUNT_HEADER, account))
         async with self._runtime.gateway_use():
             return await self._client.request(
                 method,
@@ -73,11 +94,37 @@ class GatewayClient:
             )
 
 
-def is_permission_denial(response: httpx.Response) -> bool:
-    if response.status_code != 403:
-        return False
+@attr.s(auto_attribs=True, frozen=True)
+class AmbiguousAccount:
+    service: str
+    accounts: tuple[str, ...]
+
+
+def _error_message(response: httpx.Response) -> str | None:
     try:
         body = response.json()
     except ValueError:
-        return False
-    return isinstance(body, dict) and body.get("error") == PERMISSION_DENIED_MESSAGE
+        return None
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error")
+    return error if isinstance(error, str) else None
+
+
+def is_permission_denial(response: httpx.Response) -> bool:
+    return response.status_code == 403 and _error_message(response) == PERMISSION_DENIED_MESSAGE
+
+
+def ambiguous_account(response: httpx.Response) -> AmbiguousAccount | None:
+    """The service and its stored accounts when the gateway refused for want of an account choice."""
+    if response.status_code != 400:
+        return None
+    message = _error_message(response)
+    if message is None:
+        return None
+    match = _AMBIGUOUS_ACCOUNT_RE.search(message)
+    if match is None:
+        return None
+    return AmbiguousAccount(
+        service=match.group("service"), accounts=tuple(re.findall(r"'([^']*)'", match.group("accounts")))
+    )

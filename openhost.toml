@@ -26,5 +26,6 @@ app_data = true
 
 [[services.v2.provides]]
 service = "github.com/imbue-openhost/openhost-latchkey/services/latchkey"
-version = "0.1.0"
+# 0.2.0: credential status is reported per account, and proxy calls select one (see services/latchkey/).
+version = "0.2.0"
 endpoint = "/api/"

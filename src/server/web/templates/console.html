@@ -4,10 +4,12 @@
 <p class="muted">Connect third-party services here; other apps call them through latchkey
 without ever seeing the credentials.</p>
 <div id="gateway-warning"></div>
-<h2>Connected services</h2>
+<h2>Connected accounts</h2>
+<p class="muted">A service can hold several accounts; apps pick one per request.</p>
 <table id="connected"><tbody></tbody></table>
 <h2>Available services</h2>
-<p class="muted">Connect with a browser login where supported, or paste credentials manually.</p>
+<p class="muted">Connect with a browser login where supported, or paste credentials manually.
+Connecting a service that already has an account adds another one.</p>
 <table id="available"><tbody></tbody></table>
 <div class="card">
   <h2 style="margin-top:0">Register a custom service</h2>
@@ -20,6 +22,19 @@ without ever seeing the credentials.</p>
 </div>
 {% endblock %}
 {% block script %}
+// The empty account is latchkey's unnamed default: credentials stored before the account was
+// known, or for services that can't report one.
+function accountLabel(account) {
+  return account === '' ? 'default account' : account;
+}
+
+function cell(row, text, className) {
+  const td = row.insertCell();
+  td.textContent = text;
+  if (className) td.className = className;
+  return td;
+}
+
 async function refresh() {
   const r = await fetch('/owner/api/status');
   const s = await r.json();
@@ -28,29 +43,40 @@ async function refresh() {
       '<div class="card" style="border-color:#b3261e">latchkey gateway is not running — check app logs</div>';
     return;
   }
-  // s.auth: {serviceName: {credentialType, credentialStatus}}
+  // s.connected: [{service, accounts: [{account, credential_type, credential_status}]}]
   const connected = document.querySelector('#connected tbody');
   connected.innerHTML = '';
-  const authed = Object.entries(s.auth || {});
-  if (authed.length === 0) connected.innerHTML = '<tr><td class="muted">none yet</td></tr>';
-  for (const [name, info] of authed) {
-    const status = info.credentialStatus || '';
-    connected.innerHTML +=
-      `<tr><td><a href="/connect/${name}">${name}</a></td><td class="status-${status}">${status}</td>` +
-      `<td><button onclick="clearAuth('${name}')">Disconnect</button></td></tr>`;
+  const rows = (s.connected || []).flatMap(
+    (entry) => entry.accounts.map((a) => ({service: entry.service, ...a})));
+  if (rows.length === 0) connected.innerHTML = '<tr><td class="muted">none yet</td></tr>';
+  for (const {service, account, credential_status} of rows) {
+    const row = connected.insertRow();
+    const link = document.createElement('a');
+    link.href = `/connect/${encodeURIComponent(service)}`;
+    link.textContent = service;
+    row.insertCell().append(link);
+    cell(row, accountLabel(account), 'muted');
+    cell(row, credential_status, `status-${credential_status}`);
+    const button = document.createElement('button');
+    button.textContent = 'Disconnect';
+    button.onclick = () => clearAuth(service, account);
+    row.insertCell().append(button);
   }
   // s.services: array of service name strings
   const available = document.querySelector('#available tbody');
   available.innerHTML = '';
   for (const name of (s.services || [])) {
-    available.innerHTML +=
-      `<tr><td>${name}</td>` +
-      `<td><a href="/connect/${name}"><button class="primary">Connect</button></a></td></tr>`;
+    const row = available.insertRow();
+    cell(row, name);
+    const connect = document.createElement('a');
+    connect.href = `/connect/${encodeURIComponent(name)}`;
+    connect.innerHTML = '<button class="primary">Connect</button>';
+    row.insertCell().append(connect);
   }
 }
-async function clearAuth(name) {
+async function clearAuth(name, account) {
   await fetch('/owner/api/auth/clear', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({service_name: name})});
+    body: JSON.stringify({service_name: name, account: account})});
   refresh();
 }
 async function registerService() {

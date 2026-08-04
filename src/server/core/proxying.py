@@ -1,6 +1,13 @@
 import re
 
+from server.core.gateway_client import GATEWAY_HEADER_PREFIX
+
 PROXY_PATH_PREFIX = "/api/proxy/"
+
+# Consumer-facing header naming which of a service's stored accounts to use (see the service spec).
+# Consumed here rather than forwarded: the gateway takes the choice on its own header, which only
+# this app may set.
+ACCOUNT_HEADER = "X-Latchkey-Account"
 
 # Request headers never forwarded upstream. The router's service proxy authenticates callers
 # for us; Authorization and Cookie from the original request must not leak to third parties
@@ -52,11 +59,24 @@ def extract_proxy_target(raw_path: str, query: str) -> str | None:
 
 
 def forwardable_request_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    return [
-        (name, value)
-        for name, value in headers
-        if name.lower() not in _STRIPPED_REQUEST_HEADERS and not name.lower().startswith("x-openhost-")
-    ]
+    return [(name, value) for name, value in headers if not _is_stripped_request_header(name.lower())]
+
+
+def _is_stripped_request_header(lowercase_name: str) -> bool:
+    return (
+        lowercase_name in _STRIPPED_REQUEST_HEADERS
+        or lowercase_name == ACCOUNT_HEADER.lower()
+        or lowercase_name.startswith("x-openhost-")
+        or lowercase_name.startswith(GATEWAY_HEADER_PREFIX)
+    )
+
+
+def requested_account(headers: list[tuple[str, str]]) -> str | None:
+    """The account the consumer selected via `X-Latchkey-Account`, or None when it left the choice open."""
+    for name, value in headers:
+        if name.lower() == ACCOUNT_HEADER.lower():
+            return value
+    return None
 
 
 def forwardable_response_headers(headers: list[tuple[str, str]]) -> dict[str, str]:
