@@ -1,6 +1,6 @@
-# openhost-latchkey
+# bottled-latchkey
 
-OpenHost app packaging [latchkey](https://github.com/imbue-ai/latchkey): a credential-injecting
+Cloud in a Bottle app packaging [latchkey](https://github.com/imbue-ai/latchkey): a credential-injecting
 proxy so other apps in the compute space can call third-party APIs (Slack, GitHub, Gmail, ...)
 **without ever seeing the secrets**.
 
@@ -9,7 +9,7 @@ proxy so other apps in the compute space can call third-party APIs (Slack, GitHu
 The container runs three things:
 
 - **The front server** (litestar, single process) — the owner console, the cross-app service
-  endpoint, and the permission shim between OpenHost grants and latchkey. Web glue lives in
+  endpoint, and the permission shim between Cloud in a Bottle grants and latchkey. Web glue lives in
   `src/server/web/` (routes, request/response models, templates), framework-free logic in
   `src/server/core/`, unit tests in `src/server/tests/`; `tests/` at the repo root holds the
   containerized integration tests.
@@ -85,9 +85,9 @@ just check   # lint, format, typecheck
 Python work uses [uv](https://docs.astral.sh/uv/). Use `uv add <pkg>` to add a
 dependency and `uv add --group dev <pkg>` for a dev-only one.
 
-`just test` uses the OpenHost test harness (the `openhost[test-harness]` package),
+`just test` uses the Cloud in a Bottle test harness (the `openhost[test-harness]` package),
 which builds the Dockerfile and runs the app under **podman** (so podman must be
-running on the host) fronted by the real OpenHost router. `stack.url` requires
+running on the host) fronted by the real Cloud in a Bottle router. `stack.url` requires
 owner auth (use `stack.owner_session` for requests, or `stack.playwright_login(page)`
 for browser tests); `stack.app_url` hits the container directly. See `tests/` for the
 `stack` fixture.
